@@ -1,4 +1,6 @@
 * text=auto
+*.pdf binary
+*.pptx binary
 *.py text eol=lf
 *.js text eol=lf
 *.css text eol=lf
