@@ -1,0 +1,23 @@
+✔ district search accepts both language names regardless of the selected language (3.3929ms)
+✔ name, number, district and type filters work together (1.8067ms)
+✔ Kazakh dates contain readable month names without depending on Intl locale data (1.9741ms)
+✔ switching language keeps an existing form, its text and selected file (1.0415ms)
+✔ unsaved tab navigation asks before discarding and cancel preserves data (0.8602ms)
+✔ browser back navigation cancel restores the original route without replacing the form (1.1455ms)
+✔ unload warning is cleared by reset or a successful save, and kept on save failure (1.4993ms)
+✔ profile saves send changed fields only, including normalized arrays (1.0104ms)
+✔ a late save response cannot clear changes made in a different form (0.9342ms)
+✔ public organization navigation reloads newly published and archived materials (1.2993ms)
+✔ catalog and all-news navigation reload their public data (0.9837ms)
+✔ a slower earlier navigation cannot overwrite a newer public page (0.9924ms)
+✔ an account change invalidates a pending public response (1.2751ms)
+✔ article rendering escapes HTML in the title, summary and body (13.8285ms)
+✔ large text changes the root font size used by rem values (1.0969ms)
+ℹ tests 15
+ℹ suites 0
+ℹ pass 15
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 117.4465

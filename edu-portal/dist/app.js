@@ -20,19 +20,24 @@ const typeLabel = type => t(type === 'extra' ? 'extra' : type);
 const districtLabel = value => DICTIONARY[state.lang].districts[DISTRICTS.indexOf(value)] || value;
 const orgIcon = type => type === 'garden' ? 'flower' : type === 'extra' ? 'spark' : 'school';
 const paragraphs = text => String(text || '').split('\n').filter(Boolean).map(line => `<p>${esc(line)}</p>`).join('');
-const dateLabel = value => new Date(value + 'T12:00:00').toLocaleDateString(state.lang === 'kk' ? 'kk-KZ' : 'ru-RU',{day:'numeric',month:'long',year:'numeric'});
+const KK_MONTHS = ['қаңтар','ақпан','наурыз','сәуір','мамыр','маусым','шілде','тамыз','қыркүйек','қазан','қараша','желтоқсан'];
+const dateLabel = value => { const date = new Date(value + 'T12:00:00'); if (Number.isNaN(date.getTime())) return t('empty'); return state.lang === 'kk' ? `${date.getDate()} ${KK_MONTHS[date.getMonth()]} ${date.getFullYear()}` : date.toLocaleDateString('ru-RU',{day:'numeric',month:'long',year:'numeric'}); };
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
 const isAdmin = () => state.user?.role === 'admin';
 const isStaff = () => ['admin','teacher'].includes(state.user?.role);
 const privateOrg = id => state.private.organizations.find(org => org.id === id);
-let toastTimer;
+let toastTimer, activeForm = null, formDirty = false, renderedHash = location.hash;
+function markFormSaved() { formDirty = false; }
+function canLeaveForm() { if (!formDirty || !activeForm?.isConnected) return true; if (!window.confirm('В форме есть несохранённые изменения. Покинуть её и потерять изменения?')) return false; markFormSaved(); return true; }
 function toast(message) { const element = document.getElementById('toast'); element.textContent = message; element.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => element.hidden = true,4500); }
 function navigate(hash) { if (location.hash === hash) route(); else location.hash = hash; }
-function clearPrivate() { state.epoch++; Object.assign(state,{user:null,csrf:'',private:{organizations:[],news:[],documents:[],quality:[]},users:[],audit:[]}); }
+function clearPrivate() { state.epoch++; activeForm = null; markFormSaved(); Object.assign(state,{user:null,csrf:'',private:{organizations:[],news:[],documents:[],quality:[]},users:[],audit:[]}); }
 async function api(path,{method='GET',body}={}) {
+  const requestForm = activeForm;
   const response = await fetch('/api' + path,{method,credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json',...(method === 'GET' ? {} : {'X-CSRF-Token':state.csrf})},...(body === undefined ? {} : {body:JSON.stringify(body)})});
   const result = await response.json().catch(() => ({error:'Не удалось прочитать ответ сервера.'}));
   if (!response.ok) { if (response.status === 401 && path !== '/login') clearPrivate(); const error = new Error(result.error || 'Не удалось выполнить действие.'); error.status = response.status; throw error; }
+  if (method !== 'GET' && !['/login','/logout'].includes(path) && requestForm === activeForm) markFormSaved();
   return result;
 }
 async function loadData() {
@@ -52,6 +57,7 @@ const accountChannel = typeof BroadcastChannel === 'function' ? new BroadcastCha
 if (accountChannel) accountChannel.onmessage = async () => { clearPrivate(); await initialize(); };
 function shell() {
   document.documentElement.lang = state.lang;
+  document.documentElement.style.setProperty('--base',state.largeText ? '18px' : '16px');
   document.body.classList.toggle('large-text',state.largeText);
   const brand = document.querySelector('header .brand'); brand.href = '#catalog'; brand.querySelector('strong').textContent = t('brand'); brand.querySelector('small').textContent = t('region'); brand.setAttribute('aria-label',t('brand'));
   const links = [['#catalog',t('catalog')],['#all-news',t('news')],...(state.user ? [[isAdmin() ? '#admin' : isStaff() ? '#cabinet/' + state.user.orgId : '#org/' + state.user.orgId,t('cabinet')]] : [])];
@@ -78,12 +84,15 @@ function renderCatalogPage() {
   document.getElementById('district-filter').addEventListener('change',event => { state.district = event.target.value; state.page = 1; catalogResults(); });
 }
 function catalogResults() {
-  const normalized = value => String(value).toLowerCase().replace(/ё/g,'е').replace(/№/g,'').trim();
-  const orgs = state.public.organizations.filter(org => (state.type === 'all' || org.type === state.type) && (state.district === 'all' || org.district === state.district) && normalized([org.name,org.nameKk,org.district].join(' ')).includes(normalized(state.query)));
+  const orgs = filterOrganizations(state.public.organizations);
   const pages = Math.ceil(orgs.length/6); state.page = Math.max(1,Math.min(state.page,pages || 1));
   document.getElementById('catalog-result').textContent = `${t('found')}: ${orgs.length}`;
   document.getElementById('org-grid').innerHTML = orgs.length ? orgs.slice((state.page-1)*6,state.page*6).map(org => `<article class="org-card"><div class="org-card-top"><span class="org-symbol ${esc(org.type)}">${icon(orgIcon(org.type))}</span><span class="org-kind">${typeLabel(org.type)}</span></div><div class="org-content"><h3><a href="#org/${esc(org.id)}">${esc(translated(org,'name'))}</a></h3><p class="org-location">${icon('pin')}${esc(districtLabel(org.district))}</p><p class="catalog-description">${esc(translated(org,'description'))}</p></div><div class="org-card-bottom"><span class="tag">${esc(translated(org,'tag'))}</span><a class="text-button" href="#org/${esc(org.id)}">${t('open')} ${icon('arrow')}</a></div></article>`).join('') : empty(t('noResults'));
   document.getElementById('pagination').innerHTML = pages > 1 ? Array.from({length:pages},(_,i) => `<button data-page="${i+1}" aria-label="${i+1}" ${state.page === i+1 ? 'aria-current="page"' : ''}>${i+1}</button>`).join('') : '';
+}
+function filterOrganizations(organizations) {
+  const normalized = value => String(value).toLowerCase().replace(/ё/g,'е').replace(/№/g,'').trim();
+  return organizations.filter(org => { const index = DISTRICTS.indexOf(org.district); const districts = Object.values(DICTIONARY).map(language => language.districts[index] || ''); return (state.type === 'all' || org.type === state.type) && (state.district === 'all' || org.district === state.district) && normalized([org.name,org.nameKk,org.district,...districts].join(' ')).includes(normalized(state.query)); });
 }
 function newsCard(news,preview=false) { return `<article class="news-card"><div class="news-art art-${esc(news.art || 'school')}"><span>${icon('book')}</span></div><div class="news-meta"><span>${esc(state.lang === 'kk' ? {'События':'Оқиғалар','Кружки':'Үйірмелер','Родителям':'Ата-аналарға'}[news.category] : news.category)}</span><time datetime="${esc(news.date)}">${dateLabel(news.date)}</time></div><h3><a href="${preview ? '#preview-article/' : '#article/'}${esc(news.id)}">${esc(translated(news,'title'))}</a></h3><p>${esc(translated(news,'summary'))}</p></article>`; }
 function documentList(documents,preview=false) { return documents.length ? `<div class="document-list">${documents.map(doc => `<div class="document-row">${icon('file')}<div><strong>${esc(translated(doc,'title'))}</strong><small>${esc(doc.filename.split('.').pop().toUpperCase())} · ${Math.ceil(doc.size/1024)} KB</small></div><a class="text-button" href="/api/${preview ? '' : 'public/'}documents/${esc(doc.id)}" download>${t('download')} ${icon('download')}</a></div>`).join('')}</div>` : empty(t('noDocs')); }
@@ -151,7 +160,8 @@ function renderCabinet(org,tab='profile',editing='') {
   }
   document.title = tabs[tab] + ' — ' + org.name;
 }
-function bindProfile(org) { bindForm('profile-form',async values => { const data = {...org,...values}; for (const key of ['features','featuresKk','ageGroups','ageGroupsKk']) if (typeof data[key] === 'string') data[key] = data[key].split(',').map(value => value.trim()).filter(Boolean); await api('/organizations/'+org.id,{method:'PUT',body:data}); await loadData(); await route(); toast('Изменения сохранены.'); }); }
+function bindProfile(org) { bindForm('profile-form',async values => { const data = changedProfileFields(org,values); if (!Object.keys(data).length) { markFormSaved(); toast('Изменений нет.'); return; } await api('/organizations/'+org.id,{method:'PATCH',body:data}); await loadData(); await route(); toast('Изменения сохранены.'); }); }
+function changedProfileFields(org,values) { const data = {...values}; for (const key of ['features','featuresKk','ageGroups','ageGroupsKk']) if (typeof data[key] === 'string') data[key] = data[key].split(',').map(value => value.trim()).filter(Boolean); for (const [key,value] of Object.entries(data)) if (JSON.stringify(value) === JSON.stringify(Array.isArray(value) ? (org[key] || []) : (org[key] || ''))) delete data[key]; return data; }
 function renderNewsEditor(org,id,content) {
   const news = state.private.news.filter(item => item.orgId === org.id);
   if (id) {
@@ -174,21 +184,27 @@ function renderNewOrg() { main.innerHTML = `<div class="container page-wrap narr
 function renderUsers() { main.innerHTML = `<div class="container page-wrap">${heading('Пользователи и доступ')}<a class="button button-primary" href="#new-user">Добавить аккаунт</a><div class="management-list users-management">${state.users.map(user => `<article><div><strong>${esc(user.name)}</strong><small>${esc(user.username)} · ${ROLES[user.role]}</small></div><span>${esc(privateOrg(user.orgId)?.name || 'Все организации')}</span>${user.role === 'admin' ? '' : `<a class="text-button" href="#user/${esc(user.id)}">Изменить привязку</a>`}</article>`).join('')}</div><p class="muted-note">Создание учётных записей детей для публичного чтения не требуется. В демо используются вымышленные аккаунты.</p></div>`; }
 function renderUserForm(user) { main.innerHTML = `<div class="container page-wrap narrow-page">${heading(user ? 'Изменить привязку' : 'Добавить аккаунт','При изменении привязки действующие сеансы пользователя завершаются.')}<section class="content-box"><form id="user-form"><div class="form-grid">${field('name','Отображаемое имя',user?.name,{max:80,required:true})}${selectField('role','Роль',{teacher:'Сотрудник организации',student:'Ученик / родитель'},user?.role || 'teacher')}${selectField('orgId','Организация',Object.fromEntries(state.private.organizations.map(org => [org.id,org.name])),user?.orgId)}${user ? '' : field('username','Логин','',{max:40,required:true}) + field('password','Пароль','',{type:'password',max:128,required:true})}</div><button class="button button-primary" type="submit">Сохранить аккаунт</button></form></section></div>`; bindForm('user-form',async values => { await api(user ? '/users/'+user.id : '/users',{method:user ? 'PUT' : 'POST',body:values}); await loadData(); navigate('#users'); toast('Аккаунт сохранён.'); }); }
 function bindForm(id,callback,login=false) {
-  document.getElementById(id).addEventListener('submit',async event => { event.preventDefault(); const form = event.currentTarget; const button = form.querySelector('[type=submit]'); button.disabled = true; try { await callback(Object.fromEntries(new FormData(form)),form); } catch (error) { if (login && document.getElementById('login-error')) { const box = document.getElementById('login-error'); box.textContent = error.message; box.hidden = false; } else toast(error.message); } finally { button.disabled = false; } });
+  const element = document.getElementById(id);
+  if (!login) { activeForm = element; markFormSaved(); element.addEventListener('input',() => { formDirty = true; }); element.addEventListener('change',() => { formDirty = true; }); element.addEventListener('reset',markFormSaved); }
+  element.addEventListener('submit',async event => { event.preventDefault(); const form = event.currentTarget; const button = form.querySelector('[type=submit]'); button.disabled = true; try { await callback(Object.fromEntries(new FormData(form)),form); } catch (error) { if (login && document.getElementById('login-error')) { const box = document.getElementById('login-error'); box.textContent = error.message; box.hidden = false; } else toast(error.message); } finally { button.disabled = false; } });
 }
 async function route() {
+  if (!canLeaveForm()) { const url = new URL(location.href); url.hash = renderedHash; history.replaceState(null,'',url); shell(); return; }
+  activeForm = null; markFormSaved(); renderedHash = location.hash;
   const render = ++state.render;
+  const epoch = state.epoch;
   const [page='catalog',id,tab,editing] = location.hash.slice(1).split('/');
   document.getElementById('mobile-nav').hidden = true; document.getElementById('mobile-toggle').setAttribute('aria-expanded','false');
   shell(); window.scrollTo(0,0);
   try {
+    if (['','home','catalog','organizations-section','org','all-news'].includes(page)) { const publicData = await api('/public/bootstrap'); if (render !== state.render || epoch !== state.epoch) return; state.public = publicData; }
     if (['','home','catalog','organizations-section'].includes(page)) { renderCatalogPage(); if (page === 'organizations-section') document.getElementById('organizations-section').scrollIntoView(); }
-    else if (page === 'org') { const data = await api('/public/organizations/'+encodeURIComponent(id)); if (render !== state.render) return; renderOrganization(data.organization,tab); }
-    else if (page === 'article') { const data = await api('/public/news/'+encodeURIComponent(id)); if (render !== state.render) return; renderArticle(data.news); }
+    else if (page === 'org') { const org = state.public.organizations.find(item => item.id === id); if (!org) throw new Error('Организация не найдена или ещё не опубликована.'); renderOrganization(org,tab); }
+    else if (page === 'article') { const data = await api('/public/news/'+encodeURIComponent(id)); if (render !== state.render || epoch !== state.epoch) return; renderArticle(data.news); }
     else if (page === 'all-news') renderAllNews();
     else if (page === 'login' || !state.user) renderLogin();
-    else if (page === 'preview-article') { if (!isStaff()) throw new Error('Предпросмотр доступен сотруднику.'); const data = await api('/news/'+encodeURIComponent(id)); if (render !== state.render) return; renderArticle(data.news,true); }
-    else if (page === 'preview') { if (!isStaff() || !privateOrg(id)) throw new Error('Организация недоступна аккаунту.'); const data = await api('/organizations/'+encodeURIComponent(id)); if (render !== state.render) return; renderOrganization(data.organization,tab,true); }
+    else if (page === 'preview-article') { if (!isStaff()) throw new Error('Предпросмотр доступен сотруднику.'); const data = await api('/news/'+encodeURIComponent(id)); if (render !== state.render || epoch !== state.epoch) return; renderArticle(data.news,true); }
+    else if (page === 'preview') { if (!isStaff() || !privateOrg(id)) throw new Error('Организация недоступна аккаунту.'); const data = await api('/organizations/'+encodeURIComponent(id)); if (render !== state.render || epoch !== state.epoch) return; renderOrganization(data.organization,tab,true); }
     else if (page === 'cabinet') { const org = privateOrg(id || state.user.orgId); if (!isStaff() || !org) throw new Error('Кабинет доступен сотруднику своей организации.'); renderCabinet(org,tab,editing); }
     else if (!isAdmin()) throw new Error('Раздел доступен администратору.');
     else if (page === 'admin') renderAdmin();
@@ -210,9 +226,11 @@ main.addEventListener('click',async event => {
   } catch (error) { toast(error.message); button.disabled = false; }
 });
 document.getElementById('account-actions').addEventListener('click',async event => {
-  const language = event.target.closest('[data-language]'); if (language) { state.lang = language.dataset.language; try { localStorage.setItem('edu-language',state.lang); } catch {} const url = new URL(location.href); url.searchParams.set('lang',state.lang); history.replaceState(null,'',url); await route(); return; }
-  const logout = event.target.closest('[data-logout]'); if (logout) { logout.disabled = true; try { await api('/logout',{method:'POST',body:{}}); clearPrivate(); await loadData(); accountChannel?.postMessage('changed'); navigate('#catalog'); } catch (error) { toast(error.message); logout.disabled = false; } }
+  const language = event.target.closest('[data-language]'); if (language) { state.lang = language.dataset.language; try { localStorage.setItem('edu-language',state.lang); } catch {} const url = new URL(location.href); url.searchParams.set('lang',state.lang); history.replaceState(null,'',url); if (main.querySelector('form')) shell(); else await route(); return; }
+  const logout = event.target.closest('[data-logout]'); if (logout) { if (!canLeaveForm()) return; logout.disabled = true; try { await api('/logout',{method:'POST',body:{}}); clearPrivate(); await loadData(); accountChannel?.postMessage('changed'); navigate('#catalog'); } catch (error) { toast(error.message); logout.disabled = false; } }
 });
+document.addEventListener('click',event => { if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return; const link = event.target.closest('a[href^="#"]'); if (!link) return; if (link.getAttribute('href') === location.hash || !canLeaveForm()) event.preventDefault(); },true);
+window.addEventListener('beforeunload',event => { if (formDirty && activeForm?.isConnected) { event.preventDefault(); event.returnValue = ''; } });
 document.getElementById('accessibility').addEventListener('click',() => { state.largeText = !state.largeText; try { localStorage.setItem('edu-text-size',state.largeText ? 'large' : 'normal'); } catch {} shell(); });
 document.getElementById('mobile-toggle').addEventListener('click',() => { const nav = document.getElementById('mobile-nav'); nav.hidden = !nav.hidden; document.getElementById('mobile-toggle').setAttribute('aria-expanded',String(!nav.hidden)); });
 document.querySelector('.skip-link').addEventListener('click',event => { event.preventDefault(); main.focus(); main.scrollIntoView({block:'start'}); });

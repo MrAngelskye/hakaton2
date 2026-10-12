@@ -8,6 +8,7 @@ import binascii
 import hashlib
 import hmac
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -23,6 +24,9 @@ from urllib.parse import urlsplit, unquote
 ROOT = Path(__file__).resolve().parent
 DISTRICTS = ["Центральный", "Северный", "Южный", "Восточный", "Западный"]
 TYPES = {"school": "Школа", "garden": "Детский сад", "extra": "Дополнительное образование"}
+ORG_FIELDS = {"name", "type", "district", "address", "hours", "tag", "description", "email", "features",
+              "phone", "nameKk", "descriptionKk", "addressKk", "parentInfo", "parentInfoKk", "routine", "routineKk",
+              "program", "programKk", "hoursKk", "tagKk", "ageGroups", "featuresKk", "ageGroupsKk", "visibility"}
 COOKIE = "edu_session"
 PASSWORD_ROUNDS = 240_000
 SESSION_SECONDS = 8 * 60 * 60
@@ -231,23 +235,74 @@ class PortalHandler(BaseHTTPRequestHandler):
     def read_json(self, maximum=65536):
         if self.headers.get("Content-Type", "").split(";")[0].lower() != "application/json":
             raise ApiError(415, "Ожидается JSON-запрос.")
-        origin = self.headers.get("Origin")
+        origins = self.headers.get_all("Origin", [])
         host = self.headers.get("Host", "")
-        if origin and origin not in ("http://" + host, "https://" + host):
+        if len(origins) > 1 or (origins and origins[0] not in ("http://" + host, "https://" + host)):
             raise ApiError(403, "Запрос с другого сайта запрещён.")
+        sizes = self.headers.get_all("Content-Length", [])
+        if len(sizes) != 1 or self.headers.get_all("Transfer-Encoding"):
+            raise ApiError(400, "Проверьте заголовки размера запроса.")
         try:
-            size = int(self.headers.get("Content-Length", "0"))
+            size = int(sizes[0])
         except ValueError:
             raise ApiError(400, "Некорректный размер запроса.") from None
         if not 0 < size <= maximum:
             raise ApiError(413, "Некорректный размер запроса.")
         try:
-            data = json.loads(self.rfile.read(size))
-        except (ValueError, UnicodeDecodeError):
+            payload = self.rfile.read(size)
+            if len(payload) != size:
+                raise ValueError("Incomplete request body")
+            data = json.loads(payload)
+        except (ValueError, UnicodeDecodeError, RecursionError, TimeoutError):
             raise ApiError(400, "Некорректные данные запроса.") from None
         if not isinstance(data, dict):
             raise ApiError(400, "Ожидается объект JSON.")
+        # Validate every string, including optional fields, before SQLite/UTF-8 encoding.
+        pending = [(data, 0)]
+        while pending:
+            value, depth = pending.pop()
+            if depth > 32:
+                raise ApiError(400, "Слишком сложная структура JSON.")
+            if isinstance(value, str):
+                try:
+                    value.encode("utf-8")
+                except UnicodeEncodeError:
+                    raise ApiError(400, "Текст содержит некорректный символ Unicode.") from None
+            elif isinstance(value, dict):
+                pending.extend((item, depth + 1) for item in value.keys())
+                pending.extend((item, depth + 1) for item in value.values())
+            elif isinstance(value, list):
+                pending.extend((item, depth + 1) for item in value)
+            elif isinstance(value, float) and not math.isfinite(value):
+                raise ApiError(400, "JSON не должен содержать бесконечность или NaN.")
         return data
+
+    def request_path(self):
+        # Local endpoints accept origin-form request targets and configured hosts only.
+        # Checking Host on reads as well as writes blocks DNS rebinding to localhost.
+        if not self.path.startswith("/") or any(ord(char) < 32 for char in self.path):
+            raise ApiError(400, "Некорректный адрес запроса.")
+        try:
+            target = urlsplit(self.path)
+            if target.netloc or target.scheme or target.fragment:
+                raise ValueError("Invalid request target")
+        except ValueError:
+            raise ApiError(400, "Некорректный адрес запроса.") from None
+        hosts = self.headers.get_all("Host", [])
+        if len(hosts) != 1 or not hosts[0] or any(char.isspace() for char in hosts[0]):
+            raise ApiError(400, "Укажите один корректный заголовок Host.")
+        try:
+            authority = urlsplit("http://" + hosts[0])
+            if (authority.username is not None or authority.password is not None or authority.path or
+                    authority.query or authority.fragment or not authority.hostname):
+                raise ValueError("Invalid Host")
+            hostname = authority.hostname.lower().rstrip(".")
+            port = authority.port or 80
+        except ValueError:
+            raise ApiError(400, "Некорректный заголовок Host.") from None
+        if hostname not in self.server.allowed_hosts or port != self.server.server_port:
+            raise ApiError(403, "Этот адрес сервера не разрешён.")
+        return target.path
 
     def session(self, required=True, mutation=False):
         cookie = SimpleCookie()
@@ -362,7 +417,7 @@ class PortalHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         try:
-            path = urlsplit(self.path).path
+            path = self.request_path()
             if not path.startswith("/api/"):
                 return self.static(path)
             if path == "/api/session":
@@ -472,12 +527,15 @@ class PortalHandler(BaseHTTPRequestHandler):
     def do_PUT(self):
         self.mutate("PUT")
 
+    def do_PATCH(self):
+        self.mutate("PATCH")
+
     def do_DELETE(self):
         self.mutate("DELETE")
 
     def mutate(self, method):
         try:
-            path = urlsplit(self.path).path
+            path = self.request_path()
             if path == "/api/login" and method == "POST":
                 return self.login(self.read_json())
             user, _, token_hash = self.session(mutation=True)
@@ -495,11 +553,18 @@ class PortalHandler(BaseHTTPRequestHandler):
                 self.audit(user,"organization_created",org["name"],org["id"])
                 return self.send_json({"organization": org}, 201)
             match = re.fullmatch(r"/api/organizations/([\w-]+)", path)
-            if match and method == "PUT":
+            if match and method in ("PUT", "PATCH"):
                 check_org(user, match[1], write=True)
-                self.organization(user, match[1])
-                org = {**validate_org(data), "id": match[1]}
+                if method == "PATCH" and (not data or data.keys() - ORG_FIELDS):
+                    raise ApiError(400, "Передайте только изменённые поля организации.")
                 with self.server.database.connect() as connection:
+                    # Serialize read/merge/write so distinct form sections do not overwrite one another.
+                    connection.execute("BEGIN IMMEDIATE")
+                    row = connection.execute("SELECT payload FROM organizations WHERE id=?", (match[1],)).fetchone()
+                    if not row:
+                        raise ApiError(404, "Организация не найдена.")
+                    values = {**json.loads(row["payload"]), **data} if method == "PATCH" else data
+                    org = {**validate_org(values), "id": match[1]}
                     connection.execute("UPDATE organizations SET payload=? WHERE id=?", (json.dumps(org, ensure_ascii=False), org["id"]))
                 self.audit(user,"organization_updated",org["name"],org["id"])
                 return self.send_json({"organization": org})
@@ -632,14 +697,17 @@ class PortalHandler(BaseHTTPRequestHandler):
         password = text_field(data, "password", 128)
         role = text_field(data, "role", 20)
         key = (self.client_address[0], username)
+        address_key = (self.client_address[0], None)
         now = time.time()
         with self.failure_lock:
             type(self).failures = {item: timestamps for item, timestamps in type(self).failures.items() if timestamps and timestamps[-1] > now - 300}
             recent = [stamp for stamp in self.failures.get(key, []) if stamp > now - 60]
-            if len(recent) >= 8:
+            address_recent = [stamp for stamp in self.failures.get(address_key, []) if stamp > now - 60]
+            if len(recent) >= 8 or len(address_recent) >= 32:
                 raise ApiError(429, "Слишком много попыток. Повторите через минуту.")
             # Reserve the attempt atomically before hashing. Concurrent requests cannot overwrite it.
             self.failures[key] = recent + [now]
+            self.failures[address_key] = address_recent + [now]
         with self.server.database.connect() as connection:
             row = connection.execute("SELECT * FROM users WHERE username=? COLLATE NOCASE", (username,)).fetchone()
             candidate = password_hash(password, row["salt"] if row else "00" * 16)
@@ -655,11 +723,15 @@ class PortalHandler(BaseHTTPRequestHandler):
         self.send_json({"user": public_user(row), "csrf": csrf}, cookie=self.cookie(token))
 
 
-def create_server(database_path, host="127.0.0.1", port=4173, secure_cookies=False):
+def create_server(database_path, host="127.0.0.1", port=4173, secure_cookies=False, allowed_hosts=()):
     database = Database(database_path)
     server = ThreadingHTTPServer((host, port), PortalHandler)
     server.database = database
     server.secure_cookies = secure_cookies
+    server.allowed_hosts = {"127.0.0.1", "localhost", "::1"}
+    if host not in ("0.0.0.0", "::", ""):
+        server.allowed_hosts.add(host.lower().rstrip("."))
+    server.allowed_hosts.update(value.lower().rstrip(".") for value in allowed_hosts)
     server.daemon_threads = True
     return server
 
@@ -668,10 +740,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Портал образования — сервер MVP")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=4173)
+    parser.add_argument("--allowed-host", action="append", default=[], help="Дополнительное имя сервера или IP без порта; можно указать несколько раз")
     parser.add_argument("--data-dir", default=os.environ.get("EDU_DATA_DIR", str(ROOT / "data")))
     parser.add_argument("--secure-cookies", action="store_true", default=os.environ.get("EDU_SECURE_COOKIES") == "1")
     args = parser.parse_args()
-    server = create_server(Path(args.data_dir) / "edu.sqlite3", args.host, args.port, args.secure_cookies)
+    server = create_server(Path(args.data_dir) / "edu.sqlite3", args.host, args.port, args.secure_cookies, args.allowed_host)
     print(f"Education portal: http://{args.host}:{server.server_port}", flush=True)
     try:
         server.serve_forever()

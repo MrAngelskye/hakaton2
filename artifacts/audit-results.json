@@ -1,0 +1,53 @@
+{
+  "date": "2026-10-12",
+  "baselineCommit": "41ea86b42b145be2da3ae4bc4b02a55835d5e6aa",
+  "environment": {"platform": "Windows", "python": "3.12.14", "node": "24.19.0"},
+  "independentRetest": {
+    "httpTests": {"total": 32, "passed": 32, "failed": 0},
+    "frontendTests": {"total": 15, "passed": 15, "failed": 0},
+    "javascriptSyntax": "passed"
+  },
+  "confirmedFindings": [
+    {"id": "S1", "priority": "P1", "issue": "Arbitrary Host accepted on reads and writes", "status": "fixed", "retest": "HTTP"},
+    {"id": "S2", "priority": "P2", "issue": "Malformed Unicode aborts response", "status": "fixed", "retest": "HTTP"},
+    {"id": "S3", "priority": "P2", "issue": "Deep or non-standard JSON is not rejected normally", "status": "fixed", "retest": "HTTP"},
+    {"id": "S4", "priority": "P2", "issue": "Malformed request target aborts response", "status": "fixed", "retest": "HTTP"},
+    {"id": "S5", "priority": "P2", "issue": "Changing usernames bypasses login limiter", "status": "fixed", "retest": "HTTP"},
+    {"id": "S6", "priority": "P2", "issue": "Incomplete and ambiguous HTTP framing accepted", "status": "fixed", "retest": "HTTP"},
+    {"id": "F1", "priority": "P2", "issue": "Kazakh district search returns no results", "status": "fixed", "retest": "Browser and Node"},
+    {"id": "F2", "priority": "P2", "issue": "Header overflows at 320px", "status": "fixed", "retest": "Browser at 320px and 390px"},
+    {"id": "F3", "priority": "P2", "issue": "Language switch and navigation discard unsaved form", "status": "fixed", "retest": "Browser language switch and warning; Node cancel/back/file/save checks"},
+    {"id": "F4", "priority": "P3", "issue": "Unreadable Kazakh month from Intl fallback", "status": "fixed", "retest": "Node"},
+    {"id": "F5", "priority": "P2", "issue": "Public lists remain stale after publication or archive", "status": "fixed", "retest": "Browser and Node"},
+    {"id": "F6", "priority": "P2", "issue": "Full stale form overwrites another section", "status": "fixed", "retest": "Concurrent HTTP, Node changed fields and browser save"},
+    {"id": "F7", "priority": "P2", "issue": "Large text does not change root rem size", "status": "fixed", "retest": "Browser and Node"}
+  ],
+  "browserChecks": {
+    "kazakhDistrictQuery": {"query": "Орталық", "before": 0, "after": 3},
+    "kindergartenLayout320": {"clientWidth": 305, "beforeScrollWidth": 334, "afterScrollWidth": 305},
+    "kindergartenLayout390": {"clientWidth": 375, "scrollWidth": 375},
+    "rootFontSize": {"normal": "16px", "large": "18px"},
+    "unsavedTextSurvivesLanguageSwitch": true,
+    "unsavedNavigationWarningObserved": true,
+    "publicationAppearsAfterNavigationWithoutReload": true,
+    "archivedPublicationRemovedAfterNavigation": true,
+    "separateSectionSave": "passed",
+    "wrongPassword": "normal error",
+    "otherOrganizationCabinet": "denied",
+    "htmlPayloadRenderedAsText": true,
+    "logoutRemovesOtherTabCabinet": true
+  },
+  "additionalRegression": "Late response from old form must not clear dirty state of new form",
+  "sourceArchive": {"integrity": "passed", "cleanExtractionStartup": "passed", "files": 43, "publicOrganizations": 12, "kindergartens": 4, "containsDatabaseOrLocalCredentials": false},
+  "realOrganizationsContacted": false,
+  "realIntegrations": false,
+  "limits": [
+    "Targeted local mock review; no full security certification",
+    "Host and Origin tested via HTTP; no end-to-end browser DNS rebinding attack",
+    "No proxy request-smuggling exploit tested",
+    "Same-field concurrent changes use last-save-wins; legacy PUT fully replaces profile",
+    "Rate limiter is per-process memory and shared per IP",
+    "No load test, antivirus, production deployment or full accessibility audit",
+    "Node tests use a browser-like VM; responsive layout separately checked in real browser"
+  ]
+}

@@ -1,0 +1,52 @@
+test_admin_adds_organization_account_and_rebinds_session (test_access.AccessTests.test_admin_adds_organization_account_and_rebinds_session) ... ok
+test_anonymous_and_static_data_do_not_disclose_catalog (test_access.AccessTests.test_anonymous_and_static_data_do_not_disclose_catalog) ... 127.0.0.1 - - [12/Oct/2026 21:35:53] code 404, message Not Found
+127.0.0.1 - - [12/Oct/2026 21:35:53] "GET /seed.json HTTP/1.1" 404 -
+127.0.0.1 - - [12/Oct/2026 21:35:53] code 404, message Not Found
+127.0.0.1 - - [12/Oct/2026 21:35:53] "GET /server.py HTTP/1.1" 404 -
+127.0.0.1 - - [12/Oct/2026 21:35:53] code 404, message Not Found
+127.0.0.1 - - [12/Oct/2026 21:35:53] "GET /data/edu.sqlite3 HTTP/1.1" 404 -
+127.0.0.1 - - [12/Oct/2026 21:35:53] code 404, message Not Found
+127.0.0.1 - - [12/Oct/2026 21:35:53] "GET /../seed.json HTTP/1.1" 404 -
+127.0.0.1 - - [12/Oct/2026 21:35:53] code 404, message Not Found
+127.0.0.1 - - [12/Oct/2026 21:35:53] "GET /%2e%2e/seed.json HTTP/1.1" 404 -
+127.0.0.1 - - [12/Oct/2026 21:35:53] "GET /app.js HTTP/1.1" 200 -
+ok
+test_csrf_required_and_logout_invalidates_session (test_access.AccessTests.test_csrf_required_and_logout_invalidates_session) ... ok
+test_news_visible_only_in_own_school (test_access.AccessTests.test_news_visible_only_in_own_school) ... ok
+test_second_school_and_kindergarten_have_separate_scopes (test_access.AccessTests.test_second_school_and_kindergarten_have_separate_scopes) ... ok
+test_selected_role_cannot_elevate_an_account (test_access.AccessTests.test_selected_role_cannot_elevate_an_account) ... ok
+test_student_cannot_write_even_with_valid_session_and_csrf (test_access.AccessTests.test_student_cannot_write_even_with_valid_session_and_csrf) ... ok
+test_student_gets_only_assigned_school_and_its_news (test_access.AccessTests.test_student_gets_only_assigned_school_and_its_news) ... ok
+test_teacher_writes_own_school_but_cannot_cross_organization (test_access.AccessTests.test_teacher_writes_own_school_but_cannot_cross_organization) ... ok
+test_audit_is_scoped_and_does_not_include_credentials (test_mvp.MvpTests.test_audit_is_scoped_and_does_not_include_credentials) ... ok
+test_document_validation_and_organization_access (test_mvp.MvpTests.test_document_validation_and_organization_access) ... ok
+test_draft_news_is_hidden_then_public_then_archived_and_restored (test_mvp.MvpTests.test_draft_news_is_hidden_then_public_then_archived_and_restored) ... ok
+test_garden_fields_have_independent_translations_and_school_cannot_edit (test_mvp.MvpTests.test_garden_fields_have_independent_translations_and_school_cannot_edit) ... ok
+test_new_draft_site_is_private_until_explicit_publication (test_mvp.MvpTests.test_new_draft_site_is_private_until_explicit_publication) ... ok
+test_non_ascii_csrf_is_a_normal_denial (test_mvp.MvpTests.test_non_ascii_csrf_is_a_normal_denial) ... ok
+test_parallel_login_limit_reserves_each_attempt (test_mvp.MvpTests.test_parallel_login_limit_reserves_each_attempt) ... ok
+test_pdf_upload_preserves_bytes_and_hides_draft_and_archive (test_mvp.MvpTests.test_pdf_upload_preserves_bytes_and_hides_draft_and_archive) ... ok
+test_public_catalog_is_open_but_accounts_and_private_api_stay_closed (test_mvp.MvpTests.test_public_catalog_is_open_but_accounts_and_private_api_stay_closed) ... ok
+test_reader_does_not_see_own_school_draft (test_mvp.MvpTests.test_reader_does_not_see_own_school_draft) ... ok
+test_additional_hosts_must_be_configured_explicitly (test_security_review.SecurityReviewTests.test_additional_hosts_must_be_configured_explicitly) ... ok
+test_ambiguous_or_incomplete_body_is_rejected_before_login (test_security_review.SecurityReviewTests.test_ambiguous_or_incomplete_body_is_rejected_before_login) ... ok
+test_changing_usernames_does_not_bypass_login_rate_limit (test_security_review.SecurityReviewTests.test_changing_usernames_does_not_bypass_login_rate_limit) ... ok
+test_concurrent_patches_keep_distinct_editor_changes (test_security_review.SecurityReviewTests.test_concurrent_patches_keep_distinct_editor_changes) ... ok
+test_deep_json_invalid_json_and_non_finite_values_do_not_abort_http (test_security_review.SecurityReviewTests.test_deep_json_invalid_json_and_non_finite_values_do_not_abort_http) ... ok
+test_foreign_host_is_rejected_for_read_and_login_even_with_matching_origin (test_security_review.SecurityReviewTests.test_foreign_host_is_rejected_for_read_and_login_even_with_matching_origin) ... ok
+test_loopback_alias_and_matching_origin_still_work (test_security_review.SecurityReviewTests.test_loopback_alias_and_matching_origin_still_work) ... ok
+test_malformed_request_targets_return_400 (test_security_review.SecurityReviewTests.test_malformed_request_targets_return_400) ... 127.0.0.1 - - [12/Oct/2026 21:36:00] "GET http://[bad HTTP/1.1" 400 -
+127.0.0.1 - - [12/Oct/2026 21:36:00] "GET http://127.0.0.1/api/login HTTP/1.1" 400 -
+127.0.0.1 - - [12/Oct/2026 21:36:00] "POST http://[bad HTTP/1.1" 400 -
+127.0.0.1 - - [12/Oct/2026 21:36:00] "POST http://127.0.0.1/api/login HTTP/1.1" 400 -
+ok
+test_missing_duplicate_and_malformed_host_are_normal_errors (test_security_review.SecurityReviewTests.test_missing_duplicate_and_malformed_host_are_normal_errors) ... ok
+test_origin_validation_keeps_authorized_mutation_scoped (test_security_review.SecurityReviewTests.test_origin_validation_keeps_authorized_mutation_scoped) ... ok
+test_profile_patch_preserves_other_sections_and_rejects_forbidden_fields (test_security_review.SecurityReviewTests.test_profile_patch_preserves_other_sections_and_rejects_forbidden_fields) ... ok
+test_surrogate_profile_write_does_not_change_stored_data (test_security_review.SecurityReviewTests.test_surrogate_profile_write_does_not_change_stored_data) ... ok
+test_surrogates_in_login_fields_and_json_keys_return_400 (test_security_review.SecurityReviewTests.test_surrogates_in_login_fields_and_json_keys_return_400) ... ok
+
+----------------------------------------------------------------------
+Ran 32 tests in 8.719s
+
+OK
