@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import argparse
+import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -24,7 +26,8 @@ TYPES = {"school": "Школа", "garden": "Детский сад", "extra": "Д
 COOKIE = "edu_session"
 PASSWORD_ROUNDS = 240_000
 SESSION_SECONDS = 8 * 60 * 60
-DEMO_PASSWORD = "Demo2026!"
+DEMO_PASSWORD = os.environ.get("EDU_DEMO_PASSWORD", "Demo2026!")
+MAX_DOCUMENT_BYTES = 8 * 1024 * 1024
 DEMO_USERS = [
     ("student24", "Ученик школы № 24", "student", "school-24"),
     ("student7", "Ученик школы № 7", "student", "school-7"),
@@ -68,7 +71,51 @@ def validate_org(data):
     if not isinstance(features, list) or not 1 <= len(features) <= 12:
         raise ApiError(400, "Добавьте от 1 до 12 направлений.")
     fields["features"] = [text_field({"feature": item}, "feature", 80) for item in features]
+    for key, maximum in {"phone":40, "nameKk":100, "descriptionKk":1200, "addressKk":140,
+                         "parentInfo":4000, "parentInfoKk":4000, "routine":4000, "routineKk":4000,
+                         "program":4000, "programKk":4000, "hoursKk":80, "tagKk":40}.items():
+        fields[key] = text_field(data, key, maximum, False)
+    groups = data.get("ageGroups", [])
+    if not isinstance(groups, list) or len(groups) > 8:
+        raise ApiError(400, "Укажите не более восьми возрастных групп.")
+    fields["ageGroups"] = [text_field({"value": group}, "value", 60) for group in groups]
+    for key, maximum_items in [("featuresKk",12),("ageGroupsKk",8)]:
+        values = data.get(key,[])
+        if not isinstance(values,list) or len(values) > maximum_items:
+            raise ApiError(400,"Проверьте количество пунктов казахской версии.")
+        fields[key] = [text_field({"value":value},"value",80) for value in values]
+    fields["visibility"] = data.get("visibility", "published")
+    if fields["visibility"] not in ("draft", "published"):
+        raise ApiError(400, "Выберите статус сайта.")
     return fields
+
+
+def visible(data):
+    return data.get("visibility", "published") == "published"
+
+
+def published(data):
+    return data.get("status", "published") == "published"
+
+
+def validate_news(data):
+    news = {key: text_field(data, key, size) for key, size in {"title":120, "summary":180, "body":5000, "category":30, "date":10}.items()}
+    for key, size in {"titleKk":120, "summaryKk":180, "bodyKk":5000}.items():
+        news[key] = text_field(data, key, size, False)
+    news["status"] = data.get("status", "published")
+    if news["status"] not in ("draft", "published", "archived"):
+        raise ApiError(400, "Выберите статус материала.")
+    if news["category"] not in ("События", "Кружки", "Родителям"):
+        raise ApiError(400, "Выберите категорию из списка.")
+    try:
+        parsed = date.fromisoformat(news["date"])
+        if not 2020 <= parsed.year <= 2100:
+            raise ValueError()
+        news["date"] = parsed.isoformat()
+    except ValueError:
+        raise ApiError(400, "Проверьте дату публикации.") from None
+    news["art"] = "creative" if news["category"] == "Кружки" else "parents" if news["category"] == "Родителям" else "school"
+    return news
 
 
 class Database:
@@ -94,6 +141,15 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS news_organization ON news(org_id);
                 CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS documents (
+                    id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES organizations(id),
+                    payload TEXT NOT NULL, file BLOB NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS documents_organization ON documents(org_id);
+                CREATE TABLE IF NOT EXISTS audit (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT NOT NULL, actor TEXT NOT NULL,
+                    org_id TEXT, event TEXT NOT NULL, target TEXT NOT NULL
+                );
             """)
             if not connection.execute("SELECT 1 FROM metadata WHERE key = 'initialized'").fetchone():
                 seed = json.loads((ROOT / "seed.json").read_text(encoding="utf-8"))
@@ -101,6 +157,14 @@ class Database:
                     connection.execute("INSERT INTO organizations VALUES (?,?)", (org["id"], json.dumps(org, ensure_ascii=False)))
                 for news in seed["news"]:
                     connection.execute("INSERT INTO news VALUES (?,?,?)", (news["id"], news["orgId"], json.dumps(news, ensure_ascii=False)))
+                for org in seed["organizations"]:
+                    document = {"id":"doc-" + org["id"], "orgId":org["id"], "title":"Демонстрационная памятка",
+                                "titleKk":"Демонстрациялық жадынама", "filename":"demo-information.txt",
+                                "mime":"text/plain", "status":"published", "updated":date.today().isoformat()}
+                    content = (org["name"] + "\nДемонстрационный документ. Не является официальным.\n"
+                               "Демонстрациялық құжат. Ресми құжат емес.\n").encode("utf-8")
+                    document["size"] = len(content)
+                    connection.execute("INSERT INTO documents VALUES (?,?,?,?)", (document["id"],org["id"],json.dumps(document,ensure_ascii=False),content))
                 for username, name, role, org_id in DEMO_USERS:
                     salt = secrets.token_hex(16)
                     connection.execute("INSERT INTO users VALUES (?,?,?,?,?,?,?)", (
@@ -136,6 +200,10 @@ class PortalHandler(BaseHTTPRequestHandler):
     failures = {}
     failure_lock = threading.Lock()
 
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(20)
+
     def log_message(self, format, *args):
         # Never log cookies, passwords, request bodies or user account names.
         if self.path.startswith("/api/"):
@@ -160,7 +228,7 @@ class PortalHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
-    def read_json(self):
+    def read_json(self, maximum=65536):
         if self.headers.get("Content-Type", "").split(";")[0].lower() != "application/json":
             raise ApiError(415, "Ожидается JSON-запрос.")
         origin = self.headers.get("Origin")
@@ -171,7 +239,7 @@ class PortalHandler(BaseHTTPRequestHandler):
             size = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             raise ApiError(400, "Некорректный размер запроса.") from None
-        if not 0 < size <= 65536:
+        if not 0 < size <= maximum:
             raise ApiError(413, "Некорректный размер запроса.")
         try:
             data = json.loads(self.rfile.read(size))
@@ -196,8 +264,10 @@ class PortalHandler(BaseHTTPRequestHandler):
             if required:
                 raise ApiError(401, "Войдите в свой аккаунт.")
             return None, None, token_hash
-        if mutation and not hmac.compare_digest(self.headers.get("X-CSRF-Token", ""), row["csrf"]):
-            raise ApiError(403, "Обновите страницу и повторите действие.")
+        if mutation:
+            token = self.headers.get("X-CSRF-Token", "")
+            if not re.fullmatch(r"[A-Za-z0-9_-]{20,100}", token) or not hmac.compare_digest(token, row["csrf"]):
+                raise ApiError(403, "Обновите страницу и повторите действие.")
         return public_user(row), row["csrf"], token_hash
 
     def cookie(self, token="", logout=False):
@@ -211,25 +281,84 @@ class PortalHandler(BaseHTTPRequestHandler):
 
     def organizations(self, user):
         with self.server.database.connect() as connection:
-            if user["role"] == "admin":
+            if user is None or user["role"] == "admin":
                 rows = connection.execute("SELECT payload FROM organizations ORDER BY rowid").fetchall()
             else:
                 rows = connection.execute("SELECT payload FROM organizations WHERE id=?", (user["orgId"],)).fetchall()
-        return [json.loads(row["payload"]) for row in rows]
+        organizations = [json.loads(row["payload"]) for row in rows]
+        return [org for org in organizations if visible(org)] if user is None else organizations
 
     def news(self, user):
         with self.server.database.connect() as connection:
-            rows = connection.execute("SELECT payload FROM news" if user["role"] == "admin" else "SELECT payload FROM news WHERE org_id=?",
-                                      () if user["role"] == "admin" else (user["orgId"],)).fetchall()
-        return sorted([json.loads(row["payload"]) for row in rows], key=lambda item: item["date"], reverse=True)
+            all_orgs = user is None or user["role"] == "admin"
+            rows = connection.execute("SELECT payload FROM news" if all_orgs else "SELECT payload FROM news WHERE org_id=?",
+                                      () if all_orgs else (user["orgId"],)).fetchall()
+        news = [json.loads(row["payload"]) for row in rows]
+        if user is None:
+            organization_ids = {org["id"] for org in self.organizations(None)}
+            news = [item for item in news if published(item) and item["orgId"] in organization_ids]
+        elif user["role"] == "student":
+            news = [item for item in news if published(item)]
+        return sorted(news, key=lambda item: item["date"], reverse=True)
 
     def organization(self, user, org_id):
-        check_org(user, org_id)
+        if user is not None:
+            check_org(user, org_id)
         with self.server.database.connect() as connection:
             row = connection.execute("SELECT payload FROM organizations WHERE id=?", (org_id,)).fetchone()
         if not row:
             raise ApiError(404, "Организация не найдена.")
-        return json.loads(row["payload"])
+        org = json.loads(row["payload"])
+        if user is None and not visible(org):
+            raise ApiError(404, "Организация ещё не опубликована.")
+        return org
+
+    def documents(self, user):
+        with self.server.database.connect() as connection:
+            all_orgs = user is None or user["role"] == "admin"
+            rows = connection.execute("SELECT payload FROM documents" if all_orgs else "SELECT payload FROM documents WHERE org_id=?",
+                                      () if all_orgs else (user["orgId"],)).fetchall()
+        documents = [json.loads(row["payload"]) for row in rows]
+        if user is None:
+            allowed = {org["id"] for org in self.organizations(None)}
+            documents = [item for item in documents if published(item) and item["orgId"] in allowed]
+        elif user["role"] == "student":
+            documents = [item for item in documents if published(item)]
+        return documents
+
+    def audit(self, user, event, target, org_id=None):
+        with self.server.database.connect() as connection:
+            connection.execute("INSERT INTO audit(time,actor,org_id,event,target) VALUES (?,?,?,?,?)",
+                               (time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()), user["name"], org_id, event, target))
+
+    def quality(self, org):
+        checks = {key:bool(org.get(key)) for key in ["name","nameKk","description","descriptionKk","address","addressKk","phone","email","parentInfo","parentInfoKk"]}
+        if org["type"] == "garden":
+            checks.update({key:bool(org.get(key)) for key in ["ageGroups","ageGroupsKk","routine","routineKk"]})
+        else:
+            checks.update({key:bool(org.get(key)) for key in ["program","programKk"]})
+        with self.server.database.connect() as connection:
+            for table in ["news","documents"]:
+                rows = connection.execute(f"SELECT payload FROM {table} WHERE org_id=?",(org["id"],)).fetchall()
+                checks[table] = any(published(json.loads(row["payload"])) for row in rows)
+        return {"id":org["id"], "percent":round(sum(checks.values())/len(checks)*100),"checks":checks}
+
+    def download(self, user, document_id):
+        with self.server.database.connect() as connection:
+            row = connection.execute("SELECT * FROM documents WHERE id=?",(document_id,)).fetchone()
+        if not row:
+            raise ApiError(404,"Документ не найден.")
+        metadata = json.loads(row["payload"])
+        self.organization(user,row["org_id"])
+        if (user is None or user["role"] == "student") and not published(metadata):
+            raise ApiError(404,"Документ не опубликован.")
+        self.send_response(200)
+        self.headers_common()
+        self.send_header("Content-Type",metadata["mime"])
+        self.send_header("Content-Disposition",f'attachment; filename="document-{document_id}.{metadata["filename"].rsplit(".",1)[-1]}"')
+        self.send_header("Content-Length",str(len(row["file"])))
+        self.end_headers()
+        self.wfile.write(row["file"])
 
     def do_GET(self):
         try:
@@ -239,13 +368,42 @@ class PortalHandler(BaseHTTPRequestHandler):
             if path == "/api/session":
                 user, csrf, _ = self.session(required=False)
                 return self.send_json({"user": user, "csrf": csrf})
+            if path == "/api/public/bootstrap":
+                return self.send_json({"organizations":self.organizations(None),"news":self.news(None),"documents":self.documents(None),"demo":True,"demoPasswordDefault":DEMO_PASSWORD == "Demo2026!"})
+            match = re.fullmatch(r"/api/public/organizations/([\w-]+)", path)
+            if match:
+                return self.send_json({"organization":self.organization(None,match[1])})
+            match = re.fullmatch(r"/api/public/news/([\w-]+)", path)
+            if match:
+                items = [item for item in self.news(None) if item["id"] == match[1]]
+                if not items:
+                    raise ApiError(404,"Новость не опубликована.")
+                return self.send_json({"news":items[0]})
+            match = re.fullmatch(r"/api/public/documents/([\w-]+)",path)
+            if match:
+                return self.download(None,match[1])
             user, csrf, _ = self.session()
             if path == "/api/bootstrap":
-                return self.send_json({"user": user, "csrf": csrf, "organizations": self.organizations(user), "news": self.news(user)})
+                orgs = self.organizations(user)
+                return self.send_json({"user":user,"csrf":csrf,"organizations":orgs,"news":self.news(user),"documents":self.documents(user),
+                                       "quality":[] if user["role"] == "student" else [self.quality(org) for org in orgs]})
             if path == "/api/organizations":
                 return self.send_json({"organizations": self.organizations(user)})
             if path == "/api/news":
                 return self.send_json({"news": self.news(user)})
+            if path == "/api/documents":
+                return self.send_json({"documents":self.documents(user)})
+            if path == "/api/audit":
+                if user["role"] == "student":
+                    raise ApiError(403,"Журнал доступен сотрудникам.")
+                with self.server.database.connect() as connection:
+                    rows = connection.execute("SELECT time,actor,event,target,org_id FROM audit ORDER BY id DESC LIMIT 100" if user["role"] == "admin" else
+                                              "SELECT time,actor,event,target,org_id FROM audit WHERE org_id=? ORDER BY id DESC LIMIT 100",
+                                              () if user["role"] == "admin" else (user["orgId"],)).fetchall()
+                return self.send_json({"audit":[dict(row) for row in rows]})
+            match = re.fullmatch(r"/api/documents/([\w-]+)",path)
+            if match:
+                return self.download(user,match[1])
             if path == "/api/users":
                 self.require_admin(user)
                 with self.server.database.connect() as connection:
@@ -262,7 +420,10 @@ class PortalHandler(BaseHTTPRequestHandler):
                 if not row:
                     raise ApiError(404, "Новость не найдена.")
                 check_org(user, row["org_id"])
-                return self.send_json({"news": json.loads(row["payload"])})
+                item = json.loads(row["payload"])
+                if user["role"] == "student" and not published(item):
+                    raise ApiError(404,"Новость не опубликована.")
+                return self.send_json({"news":item})
             raise ApiError(404, "Страница не найдена.")
         except ApiError as error:
             self.send_json({"error": error.message}, error.status)
@@ -274,6 +435,7 @@ class PortalHandler(BaseHTTPRequestHandler):
         files = {"/": ("index.html", "text/html"), "/index.html": ("index.html", "text/html"),
                  "/app.js": ("app.js", "text/javascript"), "/styles.css": ("styles.css", "text/css"),
                  "/roles.css": ("roles.css", "text/css"),
+                 "/mvp.css": ("mvp.css", "text/css"),
                  "/campus.svg": ("campus.svg", "image/svg+xml"), "/favicon.svg": ("favicon.svg", "image/svg+xml")}
         if unquote(path) not in files:
             self.send_error(404)
@@ -315,21 +477,22 @@ class PortalHandler(BaseHTTPRequestHandler):
 
     def mutate(self, method):
         try:
-            data = self.read_json()
             path = urlsplit(self.path).path
             if path == "/api/login" and method == "POST":
-                return self.login(data)
+                return self.login(self.read_json())
             user, _, token_hash = self.session(mutation=True)
+            data = self.read_json(12 * 1024 * 1024 if path == "/api/documents" and method == "POST" else 65536)
             if path == "/api/logout" and method == "POST":
                 with self.server.database.connect() as connection:
                     connection.execute("DELETE FROM sessions WHERE token_hash=?", (token_hash,))
                 return self.send_json({"ok": True}, cookie=self.cookie(logout=True))
             if path == "/api/organizations" and method == "POST":
                 self.require_admin(user)
-                org = validate_org(data)
+                org = validate_org({"visibility":"draft", **data})
                 org["id"] = "org-" + secrets.token_hex(8)
                 with self.server.database.connect() as connection:
                     connection.execute("INSERT INTO organizations VALUES (?,?)", (org["id"], json.dumps(org, ensure_ascii=False)))
+                self.audit(user,"organization_created",org["name"],org["id"])
                 return self.send_json({"organization": org}, 201)
             match = re.fullmatch(r"/api/organizations/([\w-]+)", path)
             if match and method == "PUT":
@@ -338,34 +501,84 @@ class PortalHandler(BaseHTTPRequestHandler):
                 org = {**validate_org(data), "id": match[1]}
                 with self.server.database.connect() as connection:
                     connection.execute("UPDATE organizations SET payload=? WHERE id=?", (json.dumps(org, ensure_ascii=False), org["id"]))
+                self.audit(user,"organization_updated",org["name"],org["id"])
                 return self.send_json({"organization": org})
             if path == "/api/news" and method == "POST":
                 org_id = text_field(data, "orgId", 80)
                 check_org(user, org_id, write=True)
                 self.organization(user, org_id)
-                news = {key: text_field(data, key, size) for key, size in {"title": 120, "summary": 180, "body": 5000, "category": 30, "date": 10}.items()}
-                if news["category"] not in ("События", "Кружки", "Родителям"):
-                    raise ApiError(400, "Выберите категорию из списка.")
-                try:
-                    parsed_date = date.fromisoformat(news["date"])
-                    if not 2020 <= parsed_date.year <= 2030:
-                        raise ValueError()
-                    news["date"] = parsed_date.isoformat()
-                except ValueError:
-                    raise ApiError(400, "Проверьте дату публикации.") from None
-                news.update(id="news-" + secrets.token_hex(8), orgId=org_id, art="creative" if news["category"] == "Кружки" else "parents" if news["category"] == "Родителям" else "school")
+                news = validate_news(data)
+                news.update(id="news-" + secrets.token_hex(8), orgId=org_id)
                 with self.server.database.connect() as connection:
                     connection.execute("INSERT INTO news VALUES (?,?,?)", (news["id"], org_id, json.dumps(news, ensure_ascii=False)))
+                self.audit(user,"news_" + news["status"],news["title"],org_id)
                 return self.send_json({"news": news}, 201)
             match = re.fullmatch(r"/api/news/([\w-]+)", path)
-            if match and method == "DELETE":
+            if match and method in ("PUT","DELETE"):
                 with self.server.database.connect() as connection:
-                    row = connection.execute("SELECT org_id FROM news WHERE id=?", (match[1],)).fetchone()
+                    row = connection.execute("SELECT * FROM news WHERE id=?", (match[1],)).fetchone()
                     if not row:
                         raise ApiError(404, "Новость не найдена.")
                     check_org(user, row["org_id"], write=True)
-                    connection.execute("DELETE FROM news WHERE id=?", (match[1],))
-                return self.send_json({"ok": True})
+                    news = json.loads(row["payload"]) if method == "DELETE" else validate_news(data)
+                    if method == "DELETE":
+                        news["status"] = "archived"
+                    news.update(id=match[1],orgId=row["org_id"])
+                    connection.execute("UPDATE news SET payload=? WHERE id=?",(json.dumps(news,ensure_ascii=False),match[1]))
+                self.audit(user,"news_" + news.get("status","published"),news["title"],row["org_id"])
+                return self.send_json({"ok":True,"news":news})
+            if path == "/api/documents" and method == "POST":
+                org_id = text_field(data,"orgId",80)
+                check_org(user,org_id,write=True)
+                self.organization(user,org_id)
+                title = text_field(data,"title",120)
+                title_kk = text_field(data,"titleKk",120,False)
+                status = data.get("status","draft")
+                if status not in ("draft","published","archived"):
+                    raise ApiError(400,"Выберите статус документа.")
+                filename = re.split(r"[\\/]",text_field(data,"filename",160))[-1]
+                extension = filename.rsplit(".",1)[-1].lower()
+                if extension not in ("pdf","txt"):
+                    raise ApiError(400,"Разрешены PDF и TXT.")
+                encoded = text_field(data,"fileBase64",12 * 1024 * 1024)
+                try:
+                    content = base64.b64decode(encoded,validate=True)
+                except (binascii.Error,ValueError):
+                    raise ApiError(400,"Некорректное содержимое файла.") from None
+                if not 0 < len(content) <= MAX_DOCUMENT_BYTES:
+                    raise ApiError(400,"Размер файла: от 1 байта до 8 МБ.")
+                if extension == "pdf" and not content.startswith(b"%PDF-"):
+                    raise ApiError(400,"Файл не является PDF.")
+                if extension == "txt":
+                    try:
+                        content.decode("utf-8-sig")
+                    except UnicodeDecodeError:
+                        raise ApiError(400,"TXT должен быть в кодировке UTF-8.") from None
+                document = {"id":"doc-" + secrets.token_hex(8),"orgId":org_id,"title":title,"titleKk":title_kk,
+                            "filename":filename,"mime":"application/pdf" if extension == "pdf" else "text/plain",
+                            "size":len(content),"status":status,"updated":date.today().isoformat()}
+                with self.server.database.connect() as connection:
+                    connection.execute("INSERT INTO documents VALUES (?,?,?,?)",(document["id"],org_id,json.dumps(document,ensure_ascii=False),content))
+                self.audit(user,"document_" + status,title,org_id)
+                return self.send_json({"document":document},201)
+            match = re.fullmatch(r"/api/documents/([\w-]+)",path)
+            if match and method in ("PUT","DELETE"):
+                with self.server.database.connect() as connection:
+                    row = connection.execute("SELECT * FROM documents WHERE id=?",(match[1],)).fetchone()
+                    if not row:
+                        raise ApiError(404,"Документ не найден.")
+                    check_org(user,row["org_id"],write=True)
+                    document = json.loads(row["payload"])
+                    document["status"] = "archived" if method == "DELETE" else data.get("status",document["status"])
+                    if document["status"] not in ("draft","published","archived"):
+                        raise ApiError(400,"Выберите статус документа.")
+                    if method == "PUT":
+                        document["title"] = text_field(data,"title",120)
+                        document["titleKk"] = text_field(data,"titleKk",120,False)
+                    document["updated"] = date.today().isoformat()
+                    connection.execute("UPDATE documents SET payload=? WHERE id=?",(json.dumps(document,ensure_ascii=False),match[1]))
+                self.audit(user,"document_" + document["status"],document["title"],row["org_id"])
+                return self.send_json({"document":document,"ok":True})
             if path == "/api/users" and method == "POST":
                 self.require_admin(user)
                 fields = self.validate_user(data)
@@ -381,6 +594,7 @@ class PortalHandler(BaseHTTPRequestHandler):
                         row = connection.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
                 except sqlite3.IntegrityError:
                     raise ApiError(409, "Этот логин уже занят.") from None
+                self.audit(user,"user_created",fields["name"],fields["orgId"])
                 return self.send_json({"user": public_user(row)}, 201)
             match = re.fullmatch(r"/api/users/([\w-]+)", path)
             if match and method == "PUT":
@@ -395,6 +609,7 @@ class PortalHandler(BaseHTTPRequestHandler):
                     connection.execute("UPDATE users SET name=?, role=?, org_id=? WHERE id=?", (fields["name"], fields["role"], fields["orgId"], match[1]))
                     connection.execute("DELETE FROM sessions WHERE user_id=?", (match[1],))
                     updated = connection.execute("SELECT * FROM users WHERE id=?", (match[1],)).fetchone()
+                self.audit(user,"user_assigned",fields["name"],fields["orgId"])
                 return self.send_json({"user": public_user(updated)})
             raise ApiError(404, "Действие не найдено.")
         except ApiError as error:
@@ -423,13 +638,13 @@ class PortalHandler(BaseHTTPRequestHandler):
             recent = [stamp for stamp in self.failures.get(key, []) if stamp > now - 60]
             if len(recent) >= 8:
                 raise ApiError(429, "Слишком много попыток. Повторите через минуту.")
+            # Reserve the attempt atomically before hashing. Concurrent requests cannot overwrite it.
+            self.failures[key] = recent + [now]
         with self.server.database.connect() as connection:
             row = connection.execute("SELECT * FROM users WHERE username=? COLLATE NOCASE", (username,)).fetchone()
             candidate = password_hash(password, row["salt"] if row else "00" * 16)
             valid_password = hmac.compare_digest(candidate, row["password_hash"] if row else "00" * 32)
             if not row or not valid_password or row["role"] != role:
-                with self.failure_lock:
-                    self.failures[key] = recent + [now]
                 raise ApiError(401, "Проверьте логин, пароль и выбранную роль.")
             token = secrets.token_urlsafe(32)
             csrf = secrets.token_urlsafe(24)

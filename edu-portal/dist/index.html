@@ -4,11 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#174b40">
+  <meta name="robots" content="noindex">
   <meta name="description" content="Образование рядом — единый портал школ и детских садов области. Найдите организацию, новости и полезную информацию для семьи.">
   <title>Образование рядом — портал школ и детских садов</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./styles.css">
   <link rel="stylesheet" href="./roles.css">
+  <link rel="stylesheet" href="./mvp.css">
   <script src="./app.js" defer></script>
 </head>
 <body>
@@ -40,7 +42,7 @@
   </svg>
   <header class="header">
     <div class="container header-inner">
-      <a class="brand" href="#home" aria-label="Образование рядом — главная"><span class="brand-mark"><svg class="icon"><use href="#i-book"/></svg></span><span><strong>Образование рядом</strong><small>Единый портал области</small></span></a>
+      <a class="brand" href="#home" aria-label="Образование рядом — главная"><span class="brand-mark"><svg class="icon"><use href="#i-book"/></svg></span><span><strong>Образование рядом</strong><small>Демонстрационный портал</small></span></a>
       <nav class="nav" id="main-nav" aria-label="Основное меню"></nav>
       <div class="header-actions"><button class="accessibility" id="accessibility" type="button" aria-label="Увеличить размер текста" aria-pressed="false">Аа</button><div id="account-actions" class="account-actions"></div><button class="icon-button mobile-toggle" id="mobile-toggle" aria-expanded="false" aria-label="Открыть меню" hidden><svg class="icon"><use href="#i-menu"/></svg></button></div>
     </div>
@@ -49,6 +51,6 @@
   <main id="main" tabindex="-1"><div class="container loading-state" role="status">Загружаем портал…</div></main>
   <footer class="footer"><div class="container footer-top"><a class="brand" href="#home"><span class="brand-mark"><svg class="icon"><use href="#i-book"/></svg></span><span><strong>Образование рядом</strong><small>Своя организация. Всё важное рядом.</small></span></a><div class="footer-links" id="footer-links"></div></div><div class="container footer-bottom"><span>© 2026 Образование рядом</span><span><span class="status-dot"></span> MVP · Данные демонстрационные</span><button class="text-button" id="demo-info">О демоверсии</button></div></footer>
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-  <dialog id="info-dialog"><div class="dialog-top"><span class="eyebrow">MVP · ТРИ РОЛИ</span><button class="icon-button" id="close-dialog" aria-label="Закрыть"><svg class="icon"><use href="#i-close"/></svg></button></div><h2>У каждого — своё пространство</h2><p>Ученик и учитель видят организацию, к которой привязан их аккаунт. Администратор управляет общим каталогом и привязками пользователей.</p><p>Данные хранятся на локальном сервере в общей базе. Проверка прав действует на сервере. Организации и тестовые аккаунты созданы для демонстрации; размещение на сервере области пока не выполнено.</p><button class="button button-primary" id="dialog-done">Понятно <svg class="icon"><use href="#i-check"/></svg></button></dialog>
+<dialog id="info-dialog"><div class="dialog-top"><span class="eyebrow">MVP · ШКОЛЫ И ДЕТСКИЕ САДЫ</span><button class="icon-button" id="close-dialog" aria-label="Закрыть"><svg class="icon"><use href="#i-close"/></svg></button></div><h2>Сайты для семьи, кабинеты для сотрудников</h2><p>Опубликованные сведения, новости и документы доступны без входа. Сотрудник обновляет свою организацию, администратор управляет сетью и назначает сотрудников.</p><p>Организации и материалы вымышленные. Кабинет пока на русском. Загрузка файлов ограничена PDF/TXT, без антивирусной проверки. Пилот на сервере области и проверка нагрузки ещё предстоят.</p><button class="button button-primary" id="dialog-done">Понятно <svg class="icon"><use href="#i-check"/></svg></button></dialog>
 </body>
 </html>

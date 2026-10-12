@@ -1,385 +1,225 @@
 'use strict';
 
-const icon = (name, cls = '') => `<svg class="icon ${cls}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const TYPES = {school:'Школа', garden:'Детский сад', extra:'Дополнительное образование'};
-const ROLES = {student:'Ученик', teacher:'Учитель', admin:'Администратор'};
-const DISTRICTS = ['Центральный','Северный','Южный','Восточный','Западный'];
+const icon = name => `<svg class="icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 const main = document.getElementById('main');
-const state = {user:null, csrf:'', organizations:[], news:[], users:[], loginRole:'student', query:'', type:'all', district:'all', page:1, view:'grid', cabinetTab:'profile', cabinetOrg:null, newsCategory:'all', ticket:0, authEpoch:0, ready:false, largeText:false};
-try { state.largeText = localStorage.getItem('edu-text-size') === 'large'; } catch {}
-let toastTimer;
-const accountChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('edu-account') : null;
-function signalAccountChange() {
-  accountChannel?.postMessage('changed');
-}
-if (accountChannel) accountChannel.onmessage = () => {
-  clearAccount();
-  updateShell();
-  main.innerHTML = '<div class="container page-wrap"><p role="status">Открываем ваш аккаунт…</p></div>';
-  initialize(true);
+const TYPES = {school:'Школа',garden:'Детский сад',extra:'Дополнительное образование'};
+const ROLES = {student:'Ученик / родитель',teacher:'Сотрудник организации',admin:'Администратор'};
+const DISTRICTS = ['Центральный','Северный','Южный','Восточный','Западный'];
+const STATUS = {draft:'Черновик',published:'Опубликовано',archived:'В архиве'};
+const DICTIONARY = {
+  ru:{brand:'Образование рядом',region:'Демонстрационный портал',catalog:'Организации',news:'Новости',login:'Войти',cabinet:'Кабинет',logout:'Выйти',all:'Все',schools:'Школы',gardens:'Детские сады',extra:'Кружки и секции',school:'Школа',garden:'Детский сад',title:'Школы и детские сады. Всё важное рядом.',intro:'Познакомьтесь с организациями, найдите контакты, новости и документы — без регистрации.',search:'Название, номер или район',allDistricts:'Все районы',found:'Найдено',open:'Открыть сайт',overview:'Об организации',parents:'Родителям',groups:'Группы и режим дня',program:'Обучение и программы',documents:'Документы',contacts:'Контакты',address:'Адрес',hours:'Время работы',phone:'Телефон',email:'Электронная почта',ages:'Возрастные группы',routine:'Режим дня',download:'Скачать',empty:'Информация пока не добавлена.',missing:'Перевод ещё не добавлен.',noResults:'Организации не найдены. Измените поиск.',noNews:'Опубликованных новостей пока нет.',noDocs:'Опубликованных документов пока нет.',demo:'Макет MVP · Данные демонстрационные',back:'К организациям',employee:'Для сотрудников',parentTitle:'Полезная информация для семьи',footer:'Сайт организации. Информация для семьи.',districts:['Центральный','Северный','Южный','Восточный','Западный']},
+  kk:{brand:'Білім беру жақын',region:'Демонстрациялық портал',catalog:'Ұйымдар',news:'Жаңалықтар',login:'Кіру',cabinet:'Кабинет',logout:'Шығу',all:'Барлығы',schools:'Мектептер',gardens:'Балабақшалар',extra:'Үйірмелер мен секциялар',school:'Мектеп',garden:'Балабақша',title:'Мектептер мен балабақшалар. Маңызды ақпарат жақын.',intro:'Ұйымдармен танысып, байланыс деректерін, жаңалықтар мен құжаттарды тіркелусіз табыңыз.',search:'Атауы, нөмірі немесе ауданы',allDistricts:'Барлық аудандар',found:'Табылды',open:'Сайтты ашу',overview:'Ұйым туралы',parents:'Ата-аналарға',groups:'Топтар және күн тәртібі',program:'Оқу және бағдарламалар',documents:'Құжаттар',contacts:'Байланыс',address:'Мекенжай',hours:'Жұмыс уақыты',phone:'Телефон',email:'Электрондық пошта',ages:'Жас топтары',routine:'Күн тәртібі',download:'Жүктеу',empty:'Ақпарат әлі қосылмаған.',missing:'Аудармасы әлі қосылмаған.',noResults:'Ұйымдар табылмады. Іздеуді өзгертіңіз.',noNews:'Жарияланған жаңалықтар әзірге жоқ.',noDocs:'Жарияланған құжаттар әзірге жоқ.',demo:'MVP макеті · Демонстрациялық деректер',back:'Ұйымдарға оралу',employee:'Қызметкерлерге',parentTitle:'Отбасыға пайдалы ақпарат',footer:'Ұйым сайты. Отбасыға арналған ақпарат.',districts:['Орталық','Солтүстік','Оңтүстік','Шығыс','Батыс']}
 };
-
-function toast(message) {
-  const element = document.getElementById('toast');
-  clearTimeout(toastTimer);
-  element.textContent = message;
-  element.hidden = false;
-  toastTimer = setTimeout(() => element.hidden = true, 4200);
-}
-function clearAccount() {
-  state.ticket++;
-  state.authEpoch++;
-  Object.assign(state, {user:null, csrf:'', organizations:[], news:[], users:[], cabinetOrg:null, query:'', type:'all', district:'all', page:1, cabinetTab:'profile', ready:false});
-}
-async function api(path, options = {}) {
-  const headers = {'Content-Type':'application/json', ...options.headers};
-  if (options.method && options.method !== 'GET') headers['X-CSRF-Token'] = options.csrf ?? state.csrf;
-  let response;
-  try {
-    response = await fetch('/api' + path, {method:options.method ?? 'GET', headers, credentials:'same-origin', cache:'no-store', ...(options.body ? {body:JSON.stringify(options.body)} : {})});
-  } catch {
-    throw new Error('Нет связи с сервером. Проверьте, запущен ли портал.');
-  }
+const state = {user:null,csrf:'',public:{organizations:[],news:[],documents:[]},private:{organizations:[],news:[],documents:[],quality:[]},users:[],audit:[],lang:'ru',query:'',type:'all',district:'all',page:1,view:'grid',loginRole:'teacher',epoch:0,render:0,largeText:false};
+try { state.lang = new URLSearchParams(location.search).get('lang') || localStorage.getItem('edu-language') || 'ru'; state.largeText = localStorage.getItem('edu-text-size') === 'large'; } catch {}
+if (!['ru','kk'].includes(state.lang)) state.lang = 'ru';
+const t = key => DICTIONARY[state.lang][key] ?? key;
+const translated = (item,key) => state.lang === 'kk' ? (item[key + 'Kk'] || t('missing')) : (item[key] || t('empty'));
+const typeLabel = type => t(type === 'extra' ? 'extra' : type);
+const districtLabel = value => DICTIONARY[state.lang].districts[DISTRICTS.indexOf(value)] || value;
+const orgIcon = type => type === 'garden' ? 'flower' : type === 'extra' ? 'spark' : 'school';
+const paragraphs = text => String(text || '').split('\n').filter(Boolean).map(line => `<p>${esc(line)}</p>`).join('');
+const dateLabel = value => new Date(value + 'T12:00:00').toLocaleDateString(state.lang === 'kk' ? 'kk-KZ' : 'ru-RU',{day:'numeric',month:'long',year:'numeric'});
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
+const isAdmin = () => state.user?.role === 'admin';
+const isStaff = () => ['admin','teacher'].includes(state.user?.role);
+const privateOrg = id => state.private.organizations.find(org => org.id === id);
+let toastTimer;
+function toast(message) { const element = document.getElementById('toast'); element.textContent = message; element.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => element.hidden = true,4500); }
+function navigate(hash) { if (location.hash === hash) route(); else location.hash = hash; }
+function clearPrivate() { state.epoch++; Object.assign(state,{user:null,csrf:'',private:{organizations:[],news:[],documents:[],quality:[]},users:[],audit:[]}); }
+async function api(path,{method='GET',body}={}) {
+  const response = await fetch('/api' + path,{method,credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json',...(method === 'GET' ? {} : {'X-CSRF-Token':state.csrf})},...(body === undefined ? {} : {body:JSON.stringify(body)})});
   const result = await response.json().catch(() => ({error:'Не удалось прочитать ответ сервера.'}));
-  if (!response.ok) {
-    if (response.status === 401 && state.user && path !== '/login') {
-      clearAccount();
-      navigate('#login', true);
-    }
-    const error = new Error(result.error || 'Не удалось выполнить действие.');
-    error.status = response.status;
-    throw error;
-  }
+  if (!response.ok) { if (response.status === 401 && path !== '/login') clearPrivate(); const error = new Error(result.error || 'Не удалось выполнить действие.'); error.status = response.status; throw error; }
   return result;
 }
 async function loadData() {
-  const epoch = state.authEpoch;
-  const data = await api('/bootstrap');
-  if (epoch !== state.authEpoch) throw new Error('Аккаунт изменён. Повторите действие.');
-  const users = data.user.role === 'admin' ? (await api('/users')).users : [];
-  if (epoch !== state.authEpoch) throw new Error('Аккаунт изменён. Повторите действие.');
-  Object.assign(state, data, {users});
-  state.ready = true;
+  const epoch = state.epoch;
+  const [publicData,session] = await Promise.all([api('/public/bootstrap'),api('/session')]);
+  if (epoch !== state.epoch) return;
+  state.public = publicData; state.user = session.user; state.csrf = session.csrf || '';
+  if (state.user) {
+    const privateData = await api('/bootstrap');
+    const users = isAdmin() ? (await api('/users')).users : [];
+    const audit = isStaff() ? (await api('/audit')).audit : [];
+    if (epoch !== state.epoch) return;
+    Object.assign(state,{private:privateData,users,audit});
+  }
 }
-function isAdmin() { return state.user?.role === 'admin'; }
-function canEdit() { return ['admin','teacher'].includes(state.user?.role); }
-function canRead(id) { return isAdmin() || state.user?.orgId === id; }
-function homeHash() { return isAdmin() ? '#catalog' : state.user ? '#org/' + state.user.orgId : '#login'; }
-function orgIcon(type) { return type === 'school' ? 'school' : type === 'garden' ? 'flower' : 'spark'; }
-function dateLabel(value) { return new Date(value + 'T12:00:00').toLocaleDateString('ru-RU', {day:'numeric',month:'long',year:'numeric'}); }
-function navigate(hash, replace = false) {
-  if (replace) { history.replaceState(null, '', hash); route(); }
-  else if (location.hash === hash) route();
-  else location.hash = hash;
+const accountChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('edu-account') : null;
+if (accountChannel) accountChannel.onmessage = async () => { clearPrivate(); await initialize(); };
+function shell() {
+  document.documentElement.lang = state.lang;
+  document.body.classList.toggle('large-text',state.largeText);
+  const brand = document.querySelector('header .brand'); brand.href = '#catalog'; brand.querySelector('strong').textContent = t('brand'); brand.querySelector('small').textContent = t('region'); brand.setAttribute('aria-label',t('brand'));
+  const links = [['#catalog',t('catalog')],['#all-news',t('news')],...(state.user ? [[isAdmin() ? '#admin' : isStaff() ? '#cabinet/' + state.user.orgId : '#org/' + state.user.orgId,t('cabinet')]] : [])];
+  const navigation = links.map(([href,label]) => `<a href="${href}" ${location.hash === href ? 'aria-current="page"' : ''}>${label}</a>`).join('');
+  for (const id of ['main-nav','mobile-nav','footer-links']) document.getElementById(id).innerHTML = navigation;
+  document.getElementById('mobile-toggle').hidden = false;
+  document.getElementById('account-actions').innerHTML = `<div class="language-switch" aria-label="Language"><button data-language="ru" aria-pressed="${state.lang === 'ru'}">RU</button><button data-language="kk" aria-pressed="${state.lang === 'kk'}">ҚАЗ</button></div>${state.user ? `<button class="button button-outline logout-button" data-logout>${t('logout')}</button>` : `<a class="button button-outline logout-button" href="#login">${t('login')}</a>`}`;
+  document.getElementById('accessibility').setAttribute('aria-pressed',String(state.largeText));
+  document.querySelector('footer .brand strong').textContent = t('brand'); document.querySelector('footer .brand small').textContent = t('footer');
+  document.querySelector('footer .brand').href = '#catalog'; document.querySelector('.footer-bottom>span:first-child').textContent = '© ' + new Date().getFullYear() + ' ' + t('brand');
+  const publicText = state.lang === 'kk' ? {skip:'Мазмұнға өту',menu:'Мәзірді ашу',nav:'Негізгі мәзір',access:'Мәтінді үлкейту',about:'Демо туралы',close:'Жабу',done:'Түсінікті'} : {skip:'Перейти к содержимому',menu:'Открыть меню',nav:'Основное меню',access:'Увеличить размер текста',about:'О демоверсии',close:'Закрыть',done:'Понятно'};
+  document.querySelector('.skip-link').textContent = publicText.skip; document.getElementById('mobile-toggle').setAttribute('aria-label',publicText.menu); document.getElementById('main-nav').setAttribute('aria-label',publicText.nav); document.getElementById('mobile-nav').setAttribute('aria-label',publicText.nav); document.getElementById('accessibility').setAttribute('aria-label',publicText.access); document.getElementById('demo-info').textContent = publicText.about; document.getElementById('close-dialog').setAttribute('aria-label',publicText.close); document.getElementById('dialog-done').textContent = publicText.done;
+  const demoDialog = document.getElementById('info-dialog'); demoDialog.querySelector('h2').textContent = state.lang === 'kk' ? 'Отбасыға арналған сайттар, қызметкерлерге арналған кабинеттер' : 'Сайты для семьи, кабинеты для сотрудников';
+  const demoParagraphs = demoDialog.querySelectorAll('p'); demoParagraphs[0].textContent = state.lang === 'kk' ? 'Жарияланған ақпарат, жаңалықтар мен құжаттар тіркелусіз қолжетімді. Қызметкер өз ұйымын жаңартады, әкімші желіні басқарады.' : 'Опубликованные сведения, новости и документы доступны без входа. Сотрудник обновляет свою организацию, администратор управляет сетью.'; demoParagraphs[1].textContent = state.lang === 'kk' ? 'Ұйымдар мен материалдар ойдан шығарылған. Кабинет әзірге орыс тілінде. PDF/TXT файлдары қабылданады, антивирустық тексеру жоқ. Серверлік пилот пен жүктемені тексеру әлі жүргізілмеген.' : 'Организации и материалы вымышленные. Кабинет пока на русском. Принимаются PDF/TXT без антивирусной проверки. Серверный пилот и проверка нагрузки ещё предстоят.';
+  document.querySelector('.footer-bottom>span:last-of-type').textContent = t('demo');
 }
-function breadcrumbs(items) {
-  return `<div class="breadcrumbs"><a href="${homeHash()}">${isAdmin() ? 'Организации' : 'Моя организация'}</a>${items.map(item => `${icon('chevron')}${item.href ? `<a href="${esc(item.href)}">${esc(item.label)}</a>` : `<span>${esc(item.label)}</span>`}`).join('')}</div>`;
+function heading(title,description='') { return `<h1 class="page-heading">${esc(title)}</h1>${description ? `<p class="page-lead">${esc(description)}</p>` : ''}`; }
+function empty(message) { return `<div class="empty-state"><p>${esc(message)}</p></div>`; }
+function renderCatalogPage() {
+  document.title = t('catalog') + ' — ' + t('brand');
+  main.innerHTML = `<div class="container"><section class="hero public-hero"><div><span class="hero-label">${icon('check')} ${t('brand')}</span><h1>${t('title')}</h1><p class="hero-description">${t('intro')}</p><a class="button button-primary" href="#organizations-section">${t('catalog')} ${icon('arrow')}</a></div><div class="hero-art"><img src="./campus.svg" alt="" width="600" height="420"></div></section><section class="section" id="organizations-section"><div class="section-heading"><h2>${t('catalog')}</h2><span>${state.public.organizations.length} · RU / ҚАЗ</span></div><div class="type-filters">${[['all','all'],['school','schools'],['garden','gardens'],['extra','extra']].map(([key,label]) => `<button class="filter-chip" data-type="${key}" aria-pressed="${state.type === key}">${t(label)}</button>`).join('')}</div><div class="catalog-tools"><label class="catalog-query">${icon('search')}<span class="sr-only">${t('search')}</span><input id="catalog-query" type="search" placeholder="${t('search')}" value="${esc(state.query)}"></label><label class="sr-only" for="district-filter">${t('allDistricts')}</label><select class="district-select" id="district-filter"><option value="all">${t('allDistricts')}</option>${DISTRICTS.map(value => `<option value="${value}" ${state.district === value ? 'selected' : ''}>${districtLabel(value)}</option>`).join('')}</select><span class="catalog-result" id="catalog-result" role="status"></span></div><div class="org-grid" id="org-grid"></div><div class="pagination" id="pagination"></div></section></div>`;
+  catalogResults();
+  document.getElementById('catalog-query').addEventListener('input',event => { state.query = event.target.value; state.page = 1; catalogResults(); });
+  document.getElementById('district-filter').addEventListener('change',event => { state.district = event.target.value; state.page = 1; catalogResults(); });
 }
-function updateShell() {
-  document.body.classList.toggle('large-text', state.largeText);
-  document.getElementById('accessibility').setAttribute('aria-pressed', String(state.largeText));
-  document.getElementById('accessibility').setAttribute('aria-label', state.largeText ? 'Вернуть обычный размер текста' : 'Увеличить размер текста');
-  const own = '#org/' + state.user?.orgId;
-  const links = !state.user ? [] : isAdmin() ? [['#catalog','Организации'],['#all-news','Новости'],['#users','Пользователи']] : [[own,'Моя организация'],[own + '/news','Новости'],[state.user.role === 'teacher' ? '#cabinet' : own + '/documents', state.user.role === 'teacher' ? 'Управление' : 'Документы']];
-  const nav = links.map(([href,label]) => `<a href="${href}" ${location.hash === href ? 'class="active"' : ''}>${label}</a>`).join('');
-  document.getElementById('main-nav').innerHTML = nav;
-  document.getElementById('mobile-nav').innerHTML = nav;
-  document.getElementById('footer-links').innerHTML = nav;
-  document.getElementById('mobile-toggle').hidden = !state.user;
-  document.getElementById('account-actions').innerHTML = state.user ? `<span class="account-pill">${icon('user')}<span><strong>${ROLES[state.user.role]}</strong><small>${esc(state.user.username)}</small></span></span><button class="button button-outline logout-button" data-logout aria-label="Выйти из аккаунта">Выйти</button>` : '<span class="demo-badge">MVP · ТЕСТОВЫЙ ДОСТУП</span>';
+function catalogResults() {
+  const normalized = value => String(value).toLowerCase().replace(/ё/g,'е').replace(/№/g,'').trim();
+  const orgs = state.public.organizations.filter(org => (state.type === 'all' || org.type === state.type) && (state.district === 'all' || org.district === state.district) && normalized([org.name,org.nameKk,org.district].join(' ')).includes(normalized(state.query)));
+  const pages = Math.ceil(orgs.length/6); state.page = Math.max(1,Math.min(state.page,pages || 1));
+  document.getElementById('catalog-result').textContent = `${t('found')}: ${orgs.length}`;
+  document.getElementById('org-grid').innerHTML = orgs.length ? orgs.slice((state.page-1)*6,state.page*6).map(org => `<article class="org-card"><div class="org-card-top"><span class="org-symbol ${esc(org.type)}">${icon(orgIcon(org.type))}</span><span class="org-kind">${typeLabel(org.type)}</span></div><div class="org-content"><h3><a href="#org/${esc(org.id)}">${esc(translated(org,'name'))}</a></h3><p class="org-location">${icon('pin')}${esc(districtLabel(org.district))}</p><p class="catalog-description">${esc(translated(org,'description'))}</p></div><div class="org-card-bottom"><span class="tag">${esc(translated(org,'tag'))}</span><a class="text-button" href="#org/${esc(org.id)}">${t('open')} ${icon('arrow')}</a></div></article>`).join('') : empty(t('noResults'));
+  document.getElementById('pagination').innerHTML = pages > 1 ? Array.from({length:pages},(_,i) => `<button data-page="${i+1}" aria-label="${i+1}" ${state.page === i+1 ? 'aria-current="page"' : ''}>${i+1}</button>`).join('') : '';
 }
+function newsCard(news,preview=false) { return `<article class="news-card"><div class="news-art art-${esc(news.art || 'school')}"><span>${icon('book')}</span></div><div class="news-meta"><span>${esc(state.lang === 'kk' ? {'События':'Оқиғалар','Кружки':'Үйірмелер','Родителям':'Ата-аналарға'}[news.category] : news.category)}</span><time datetime="${esc(news.date)}">${dateLabel(news.date)}</time></div><h3><a href="${preview ? '#preview-article/' : '#article/'}${esc(news.id)}">${esc(translated(news,'title'))}</a></h3><p>${esc(translated(news,'summary'))}</p></article>`; }
+function documentList(documents,preview=false) { return documents.length ? `<div class="document-list">${documents.map(doc => `<div class="document-row">${icon('file')}<div><strong>${esc(translated(doc,'title'))}</strong><small>${esc(doc.filename.split('.').pop().toUpperCase())} · ${Math.ceil(doc.size/1024)} KB</small></div><a class="text-button" href="/api/${preview ? '' : 'public/'}documents/${esc(doc.id)}" download>${t('download')} ${icon('download')}</a></div>`).join('')}</div>` : empty(t('noDocs')); }
+function renderOrganization(org,tab='overview',preview=false) {
+  document.title = translated(org,'name') + ' — ' + t('brand');
+  const data = preview ? state.private : state.public;
+  const tabs = {overview:t('overview'),parents:t('parents'),program:org.type === 'garden' ? t('groups') : t('program'),news:t('news'),documents:t('documents'),contacts:t('contacts')};
+  if (!tabs[tab]) tab = 'overview';
+  const base = preview ? '#preview/' : '#org/';
+  let content;
+  if (tab === 'news') { const news = data.news.filter(item => item.orgId === org.id && (preview || (item.status || 'published') === 'published')); content = news.length ? `<div class="news-grid">${news.map(item => newsCard(item,preview)).join('')}</div>` : empty(t('noNews')); }
+  else if (tab === 'documents') content = documentList(data.documents.filter(doc => doc.orgId === org.id),preview);
+  else if (tab === 'parents') content = `<section class="content-box"><h2>${t('parentTitle')}</h2>${paragraphs(translated(org,'parentInfo'))}</section>`;
+  else if (tab === 'program') content = `<section class="content-box"><h2>${tabs.program}</h2>${org.type === 'garden' ? `<h3>${t('ages')}</h3><div class="detail-features">${(state.lang === 'kk' ? (org.ageGroupsKk || []) : (org.ageGroups || [])).map(group => `<span class="tag">${esc(group)}</span>`).join('') || `<p>${t('empty')}</p>`}</div><h3>${t('routine')}</h3>${paragraphs(translated(org,'routine'))}` : paragraphs(translated(org,'program'))}</section>`;
+  else {
+    const contacts = [['pin','address',translated(org,'address')],['clock','hours',translated(org,'hours')],['info','phone',org.phone || t('empty')],['mail','email',org.email || t('empty')]];
+    const info = `<section class="content-box"><h2>${t('contacts')}</h2>${contacts.map(([symbol,label,value]) => `<div class="info-row">${icon(symbol)}<div><span>${t(label)}</span><strong>${esc(value)}</strong></div></div>`).join('')}</section>`;
+    content = tab === 'contacts' ? info : `<div class="detail-columns"><section class="content-box"><h2>${t('overview')}</h2>${paragraphs(translated(org,'description'))}<div class="detail-features">${(state.lang === 'kk' ? (org.featuresKk || []) : org.features).map(value => `<span class="tag">${icon('check')}${esc(value)}</span>`).join('')}</div><a class="button button-soft" href="${base}${esc(org.id)}/parents">${t('parents')} ${icon('arrow')}</a></section>${info}</div>`;
+  }
+  main.innerHTML = `<div class="container page-wrap"><div class="breadcrumbs"><a href="#catalog">${t('back')}</a></div>${preview ? '<div class="note-box">Предпросмотр кабинета. Черновики видны только сотруднику.</div>' : ''}<div class="detail-hero"><span class="org-symbol ${esc(org.type)}">${icon(orgIcon(org.type))}</span><div class="detail-main"><span class="org-kind">${typeLabel(org.type)} · ${esc(districtLabel(org.district))}</span><h1>${esc(translated(org,'name'))}</h1><p class="org-location">${esc(translated(org,'address'))}</p></div></div><nav class="tabs organization-tabs" aria-label="${t('overview')}">${Object.entries(tabs).map(([key,label]) => `<a class="org-tab ${key === tab ? 'selected' : ''}" ${key === tab ? 'aria-current="page"' : ''} href="${base}${esc(org.id)}/${key}">${label}</a>`).join('')}</nav>${content}</div>`;
+}
+function renderAllNews() { document.title = t('news'); main.innerHTML = `<div class="container page-wrap">${heading(t('news'))}${state.public.news.length ? `<div class="news-grid">${state.public.news.map(item => newsCard(item)).join('')}</div>` : empty(t('noNews'))}</div>`; }
+function renderArticle(news,preview=false) { main.innerHTML = `<div class="container page-wrap"><div class="breadcrumbs"><a href="${preview ? '#preview/' : '#org/'}${esc(news.orgId)}/news">${t('news')}</a></div><article class="article"><div class="news-meta"><time datetime="${esc(news.date)}">${dateLabel(news.date)}</time></div>${heading(translated(news,'title'),translated(news,'summary'))}<div class="article-body">${paragraphs(translated(news,'body'))}</div></article></div>`; document.title = translated(news,'title'); }
+
 function renderLogin() {
-  document.title = 'Вход — Образование рядом';
-  const demo = {student:'student24',teacher:'teacher24',admin:'admin'}[state.loginRole];
-  main.innerHTML = `<div class="container login-layout"><section class="login-intro"><span class="hero-label"><span class="status-dot"></span>ВАШЕ ПРОСТРАНСТВО ОБРАЗОВАНИЯ</span><h1>Своя школа.<br>Свои открытия.<br> <em>Всё рядом.</em></h1><p>Учитесь, делитесь новостями и управляйте страницей своей организации — каждый в своём кабинете.</p><div class="login-illustration"><img src="./campus.svg" alt="Школа, дети и родители среди деревьев" width="600" height="420"></div><div class="login-trust">${icon('check')}Организация откроется автоматически после входа.</div></section><section class="login-card" aria-labelledby="login-title"><span class="eyebrow">ДОБРО ПОЖАЛОВАТЬ</span><h2 id="login-title">Войти в портал</h2><p class="login-subtitle">Выберите, как вы будете пользоваться порталом.</p><div class="role-options" aria-label="Роль при входе">${[['student','Ученик','book'],['teacher','Учитель','user'],['admin','Админ','grid']].map(([role,label,symbol]) => `<button class="role-option" data-login-role="${role}" aria-pressed="${state.loginRole === role}">${icon(symbol)}<span>${label}</span></button>`).join('')}</div><div class="role-description">${state.loginRole === 'student' ? 'Страница вашей школы, её новости и документы.' : state.loginRole === 'teacher' ? 'Ваша организация и управление её страницей.' : 'Все организации области и управление пользователями.'}</div><form id="login-form"><label class="field">Логин<input name="username" required maxlength="40" autocomplete="username" placeholder="Введите логин"></label><label class="field">Пароль<input name="password" type="password" required maxlength="128" autocomplete="current-password" placeholder="Введите пароль"></label><p class="form-error" id="login-error" role="alert" hidden></p><button class="button button-primary login-submit" type="submit">Войти как ${state.loginRole === 'admin' ? 'администратор' : state.loginRole === 'teacher' ? 'учитель' : 'ученик'} ${icon('arrow')}</button></form><div class="demo-login-box"><strong>Попробовать демоверсию</strong><p>Логин: <code>${demo}</code><br>Пароль: <code>Demo2026!</code></p><button class="text-button" data-fill-demo="${demo}">Заполнить тестовый аккаунт ${icon('arrow')}</button></div><p class="login-footnote">Школа закреплена за аккаунтом администратором. При входе выбирать её не нужно.</p></section></div>`;
-  document.getElementById('login-form').addEventListener('submit', async event => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const button = form.querySelector('[type=submit]');
-    button.disabled = true;
-    document.querySelectorAll('[data-login-role]').forEach(roleButton => roleButton.disabled = true);
-    const errorBox = document.getElementById('login-error');
-    errorBox.hidden = true;
-    try {
-      const credentials = Object.fromEntries(new FormData(form));
-      const session = await api('/login', {method:'POST', body:{...credentials,role:state.loginRole}});
-      clearAccount();
-      Object.assign(state, session);
-      signalAccountChange();
-      await loadData();
-      state.cabinetOrg = state.user.orgId || state.organizations[0]?.id;
-      navigate(homeHash(), true);
-    } catch (error) {
-      if (errorBox.isConnected) { errorBox.textContent = error.message; errorBox.hidden = false; }
-    } finally { button.disabled = false; document.querySelectorAll('[data-login-role]').forEach(roleButton => roleButton.disabled = false); }
-  });
+  document.title = 'Вход в кабинет — ' + t('brand');
+  const demo = {teacher:'teacher-garden',student:'student24',admin:'admin'}[state.loginRole];
+  main.innerHTML = `<div class="container login-layout"><section class="login-intro"><span class="hero-label">${t('employee')}</span><h1>Свой сайт.<br>Актуальные новости.<br><em>Всё в порядке.</em></h1><p>Сотрудник управляет своей организацией. Посетителям не нужен аккаунт для чтения опубликованных материалов.</p><div class="login-illustration"><img src="./campus.svg" alt="" width="600" height="420"></div><a class="text-button" href="#catalog">${t('back')} ${icon('arrow')}</a></section><section class="login-card"><h2>Войти в кабинет</h2><div class="role-options">${[['student','Ученик / родитель','book'],['teacher','Сотрудник','user'],['admin','Админ','grid']].map(([key,label,symbol]) => `<button class="role-option" data-login-role="${key}" aria-pressed="${state.loginRole === key}">${icon(symbol)}<span>${label}</span></button>`).join('')}</div><form id="login-form"><label class="field">Логин<input name="username" autocomplete="username" required maxlength="40"></label><label class="field">Пароль<input name="password" type="password" autocomplete="current-password" required maxlength="128"></label><p class="form-error" id="login-error" role="alert" hidden></p><button class="button button-primary login-submit" type="submit">Войти в кабинет ${icon('arrow')}</button></form>${state.public.demoPasswordDefault ? `<div class="demo-login-box"><strong>Тестовая демонстрация</strong><p>Логин: <code>${demo}</code><br>Пароль: <code>Demo2026!</code></p><button class="text-button" data-fill-demo="${demo}">Заполнить тестовый аккаунт</button></div>` : '<p>Для входа используйте учётную запись, выданную администратором.</p>'}<p class="login-footnote">Демоаккаунты предназначены для локального показа. Кабинет MVP на русском языке.</p></section></div>`;
+  bindForm('login-form',async data => { await api('/login',{method:'POST',body:{...data,role:state.loginRole}}); state.epoch++; await loadData(); accountChannel?.postMessage('changed'); navigate(isAdmin() ? '#admin' : isStaff() ? '#cabinet/' + state.user.orgId : '#org/' + state.user.orgId); },true);
 }
-function orgCard(org) {
-  return `<article class="org-card"><div class="org-card-top"><span class="org-symbol ${esc(org.type)}">${icon(orgIcon(org.type))}</span><a class="icon-button mini-edit" href="#cabinet/${esc(org.id)}" aria-label="Редактировать: ${esc(org.name)}">${icon('file')}</a></div><div class="org-content"><div class="org-kind">${TYPES[org.type]}</div><h3><a href="#org/${esc(org.id)}">${esc(org.name)}</a></h3><p class="org-location">${icon('pin')}${esc(org.district)} район</p></div><div class="org-card-bottom"><span class="tag">${esc(org.tag)}</span><span class="card-arrow">Открыть страницу ${icon('arrow')}</span></div></article>`;
+function field(name,label,value='',{type='text',max=4000,required=false,textarea=false,full=true}={}) {
+  return `<label class="field ${full ? 'full' : ''}">${label}${textarea ? `<textarea name="${name}" rows="4" maxlength="${max}" ${required ? 'required' : ''}>${esc(value)}</textarea>` : `<input name="${name}" type="${type}" value="${esc(value)}" maxlength="${max}" ${required ? 'required' : ''}>`}</label>`;
 }
-function normalize(value) { return value.toLowerCase().replace(/ё/g,'е').replace(/№/g,'').replace(/\s+/g,' ').trim(); }
+function selectField(name,label,choices,value,full=false) { return `<label class="field ${full ? 'full' : ''}">${label}<select name="${name}">${Object.entries(choices).map(([key,text]) => `<option value="${esc(key)}" ${value === key ? 'selected' : ''}>${esc(text)}</option>`).join('')}</select></label>`; }
+function profileFields(org={}) {
+  return `<div class="form-grid">${field('name','Название на русском',org.name,{max:100,required:true})}${field('nameKk','Қазақша атауы',org.nameKk,{max:100})}${selectField('type','Тип организации',TYPES,org.type || 'garden')}${selectField('district','Район',Object.fromEntries(DISTRICTS.map(value => [value,value])),org.district || 'Центральный')}${field('address','Адрес на русском',org.address,{max:140,required:true})}${field('addressKk','Қазақша мекенжай',org.addressKk,{max:140})}${field('phone','Телефон',org.phone,{type:'tel',max:40,full:false})}${field('email','Электронная почта',org.email,{type:'email',max:120,full:false})}${field('hours','Режим работы на русском',org.hours || 'Пн–пт · 08:00–18:00',{max:80,required:true})}${field('hoursKk','Қазақша жұмыс уақыты',org.hoursKk,{max:80})}${field('tag','Возраст или классы',org.tag || 'От 2 до 6 лет',{max:40,required:true})}${field('tagKk','Қазақша жас немесе сыныптар',org.tagKk,{max:40})}${field('features','Направления и возможности — через запятую',(org.features || ['Развивающие занятия']).join(', '),{max:960,required:true})}${field('featuresKk','Қазақша бағыттар — үтір арқылы',(org.featuresKk || []).join(', '),{max:960})}${field('description','Описание на русском',org.description,{max:1200,textarea:true,required:true})}${field('descriptionKk','Қазақша сипаттама',org.descriptionKk,{max:1200,textarea:true})}${selectField('visibility','Статус сайта',{draft:'Черновик — скрыт от посетителей',published:'Опубликован — доступен всем'},org.visibility || (org.id ? 'published' : 'draft'),true)}</div>`;
+}
+const qualityLabels = {name:'Название RU',nameKk:'Название ҚАЗ',description:'Описание RU',descriptionKk:'Описание ҚАЗ',address:'Адрес RU',addressKk:'Адрес ҚАЗ',phone:'Телефон',email:'Почта',parentInfo:'Родителям RU',parentInfoKk:'Родителям ҚАЗ',routine:'Режим дня RU',routineKk:'Режим дня ҚАЗ',ageGroups:'Возрастные группы RU',ageGroupsKk:'Возрастные группы ҚАЗ',program:'Программы RU',programKk:'Программы ҚАЗ',news:'Опубликованная новость',documents:'Опубликованный документ'};
 function renderAdmin() {
-  document.title = 'Организации — Образование рядом';
-  main.innerHTML = `<div class="container page-wrap admin-page"><section class="admin-welcome"><div><span class="eyebrow">АДМИНИСТРАТОР ОБЛАСТИ</span><h1>Вся область —<br>в одном кабинете.</h1><p>Управляйте организациями и доступом к ним.</p></div><a class="button button-primary" href="#new-org">${icon('plus')}Добавить организацию</a></section><div class="admin-stats">${[[state.organizations.length,'Организаций','school'],[state.organizations.filter(o => o.type === 'school').length,'Школ','book'],[state.organizations.filter(o => o.type === 'garden').length,'Детских садов','flower'],[state.users.length,'Аккаунтов','users']].map(([count,label,symbol]) => `<div class="admin-stat"><span>${icon(symbol)}</span><div><strong>${count}</strong><small>${label}</small></div></div>`).join('')}</div><section class="section" id="catalog-section"><div class="section-heading"><div><h2>Организации области</h2><p>Все школы, детские сады и центры образования</p></div><a href="#users" class="text-button">Управление доступом ${icon('arrow')}</a></div><div class="filter-top"><div class="type-filters">${[['all','Все'],['school','Школы'],['garden','Детские сады'],['extra','Кружки и секции']].map(([type,label]) => `<button class="filter-chip" data-type="${type}" aria-pressed="${state.type === type}">${label}<span>${type === 'all' ? state.organizations.length : state.organizations.filter(o => o.type === type).length}</span></button>`).join('')}</div><label><span class="sr-only">Район области</span><select class="district-select" id="district-filter" aria-label="Район области"><option value="all">Все районы</option>${DISTRICTS.map(d => `<option ${state.district === d ? 'selected' : ''}>${d}</option>`).join('')}</select></label></div><div class="catalog-tools"><label class="catalog-query">${icon('search')}<span class="sr-only">Поиск по каталогу</span><input id="catalog-query" placeholder="Название, номер или район" value="${esc(state.query)}"></label><span class="catalog-result" id="catalog-result" role="status"></span><div class="view-toggle"><button data-view="grid" aria-pressed="${state.view === 'grid'}" aria-label="Карточки">${icon('grid')}</button><button data-view="list" aria-pressed="${state.view === 'list'}" aria-label="Список">${icon('list')}</button></div></div><div id="org-grid" class="org-grid"></div><div id="pagination" class="pagination"></div></section></div>`;
-  renderCatalog();
-  document.getElementById('catalog-query').addEventListener('input', event => { state.query = event.target.value; state.page = 1; renderCatalog(); });
-  document.getElementById('district-filter').addEventListener('change', event => { state.district = event.target.value; state.page = 1; renderCatalog(); });
+  const orgs = state.private.organizations;
+  const average = orgs.length ? Math.round(state.private.quality.reduce((sum,q) => sum+q.percent,0)/orgs.length) : 0;
+  main.innerHTML = `<div class="container page-wrap admin-page"><section class="admin-welcome"><div><span class="eyebrow">АДМИНИСТРАТОР ОБЛАСТИ</span><h1>Сайты школ и садиков.<br>В одном кабинете.</h1><p>Следите за содержанием и назначайте сотрудников.</p></div><a class="button button-primary" href="#new-org">Добавить организацию ${icon('plus')}</a></section><div class="admin-stats">${[[orgs.length,'Организаций'],[orgs.filter(org => org.type === 'garden').length,'Детских садов'],[average+'%','Заполненность'],[state.users.length,'Аккаунтов']].map(([value,label]) => `<div class="admin-stat"><div><strong>${value}</strong><small>${label}</small></div></div>`).join('')}</div><div class="section-heading"><h2>Организации</h2><a class="text-button" href="#users">Пользователи и доступ ${icon('arrow')}</a></div><div class="organization-work-list">${orgs.map(org => { const q = state.private.quality.find(item => item.id === org.id); return `<article class="content-box workspace-org"><span class="org-symbol ${esc(org.type)}">${icon(orgIcon(org.type))}</span><div><h3>${esc(org.name)}</h3><p>${TYPES[org.type]} · ${org.visibility === 'draft' ? 'Черновик сайта' : 'Сайт опубликован'} · ${q?.percent || 0}% заполнено</p></div><a class="button button-outline" href="#cabinet/${esc(org.id)}">Кабинет ${icon('arrow')}</a></article>`; }).join('')}</div><p class="muted-note">Заполненность проверяет наличие сведений. Содержание и обязательные разделы согласуются с заказчиком.</p></div>`;
+  document.title = 'Управление платформой';
 }
-function renderCatalog() {
-  if (!isAdmin()) return;
-  const query = normalize(state.query);
-  const organizations = state.organizations.filter(o => (state.type === 'all' || o.type === state.type) && (state.district === 'all' || o.district === state.district) && (!query || normalize([o.name,o.district,o.address].join(' ')).includes(query)));
-  const pages = Math.ceil(organizations.length / 6);
-  state.page = Math.max(1, Math.min(state.page, pages || 1));
-  const grid = document.getElementById('org-grid');
-  grid.className = 'org-grid' + (state.view === 'list' ? ' list' : '');
-  grid.innerHTML = organizations.length ? organizations.slice((state.page - 1) * 6, state.page * 6).map(orgCard).join('') : `<div class="empty-state">${icon('search')}<h3>Организации не найдены</h3><p>Попробуйте другое название или район.</p><button class="button button-outline" data-reset-filters>Сбросить фильтры</button></div>`;
-  document.getElementById('catalog-result').textContent = 'Найдено: ' + organizations.length;
-  document.getElementById('pagination').innerHTML = pages > 1 ? Array.from({length:pages}, (_,i) => `<button data-page="${i+1}" ${state.page === i+1 ? 'aria-current="page"' : ''} aria-label="Страница ${i+1}">${i+1}</button>`).join('') : '';
-  document.querySelectorAll('[data-type]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.type === state.type)));
-  document.querySelectorAll('[data-view]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.view === state.view)));
-}
-function newsArt(news) {
-  const type = ['school','creative','parents'].includes(news.art) ? news.art : 'school';
-  return `<div class="news-art poster-${type}"><span class="poster-label">${type === 'school' ? 'ВМЕСТЕ К НОВЫМ ОТКРЫТИЯМ' : type === 'creative' ? 'ВРЕМЯ ПОПРОБОВАТЬ НОВОЕ' : 'РАСТЁМ ВМЕСТЕ'}</span>${icon(type === 'school' ? 'school' : type === 'creative' ? 'spark' : 'users','art-icon')}</div>`;
-}
-function newsCard(news) { return `<article class="news-card">${newsArt(news)}<div class="news-meta"><span class="category">${esc(news.category)}</span><span>·</span><time datetime="${esc(news.date)}">${dateLabel(news.date)}</time></div><h3><a href="#article/${esc(news.id)}">${esc(news.title)}</a></h3><p>${esc(news.summary)}</p></article>`; }
-function renderOrganization(org, tab = 'overview') {
-  document.title = org.name + ' — Образование рядом';
-  const tabNames = {overview:'Об организации',news:'Новости',documents:'Документы'};
-  if (!tabNames[tab]) tab = 'overview';
-  main.innerHTML = `<div class="container page-wrap">${breadcrumbs([{label:isAdmin() ? org.name : 'Моя страница'}])}<div class="school-account-line"><span class="role-badge">${icon('user')}${ROLES[state.user.role]}</span><span>${isAdmin() ? 'Просмотр организации' : 'Организация закреплена за вашим аккаунтом'}</span></div><div class="detail-hero"><span class="org-symbol ${esc(org.type)}">${icon(orgIcon(org.type))}</span><div class="detail-main"><span class="org-kind">${TYPES[org.type]} · Демонстрационная карточка</span><h1>${esc(org.name)}</h1><p class="org-location">${icon('pin')}${esc(org.district)} район · ${esc(org.address)}</p></div>${canEdit() ? `<a class="button button-outline detail-favorite" href="#cabinet/${esc(org.id)}">${icon('file')}<span>Управлять страницей</span></a>` : ''}</div><nav class="tabs" aria-label="Разделы организации">${Object.entries(tabNames).map(([key,label]) => `<a class="org-tab ${tab === key ? 'selected' : ''}" href="#org/${esc(org.id)}/${key}" ${tab === key ? 'aria-current="page"' : ''}>${label}</a>`).join('')}</nav><div id="detail-content">${organizationContent(org,tab)}</div></div>`;
-}
-function organizationContent(org, tab) {
-  if (tab === 'news') {
-    const news = state.news.filter(n => n.orgId === org.id);
-    return news.length ? `<div class="news-grid">${news.map(newsCard).join('')}</div>` : `<div class="empty-state">${icon('book')}<h3>Новости появятся здесь</h3><p>Следите за объявлениями вашей организации.</p>${canEdit() ? `<a class="button button-outline" href="#cabinet/${esc(org.id)}/news">Добавить новость</a>` : ''}</div>`;
-  }
-  if (tab === 'documents') return `<div class="note-box" style="margin:0 0 23px">${icon('info')}<span>В MVP представлены демонстрационные документы вашей организации.</span></div><div class="document-list">${[['about','Сведения об организации'],['admission','Памятка по поступлению'],['schedule','Режим работы']].map(([kind,title]) => `<div class="document-row">${icon('file')}<div><strong>${title}</strong><small>Демонстрационный документ · TXT</small></div><button class="text-button" data-download="${kind}" data-org="${esc(org.id)}" aria-label="Скачать: ${title}">Скачать ${icon('download')}</button></div>`).join('')}</div>`;
-  const news = state.news.filter(n => n.orgId === org.id);
-  return `<div class="detail-columns"><div><section class="content-box"><h2>${state.user.role === 'student' ? 'Добро пожаловать в свою школу' : 'Здесь растут и открывают новое'}</h2><p>${esc(org.description)}</p><div class="detail-features">${org.features.map(feature => `<span class="tag">${icon('check')}${esc(feature)}</span>`).join('')}</div><h2 style="margin-top:27px">Всё важное для вас</h2><p>Здесь собраны новости, документы и контакты вашей организации. Заглядывайте, чтобы быть в курсе событий.</p><a class="text-button" href="#org/${esc(org.id)}/news">Новости организации ${icon('arrow')}</a></section><div class="note-box">${icon('check')}<span>Вы видите пространство своей организации. Привязкой аккаунта управляет администратор.</span></div></div><aside class="content-box"><h2>Полезная информация</h2>${[['pin','Адрес',org.district + ' район, ' + org.address],['clock','Время работы',org.hours],['mail','Электронная почта',org.email || 'Контакт пока не добавлен'],['users','Возраст или классы',org.tag]].map(([symbol,label,value]) => `<div class="info-row">${icon(symbol)}<div><span>${label}</span><strong>${esc(value)}</strong></div></div>`).join('')}<a class="button button-soft" style="width:100%;margin-top:23px" href="#org/${esc(org.id)}/documents">Документы ${icon('arrow')}</a></aside></div>${news.length ? `<section class="section news-section" style="margin-top:40px"><div class="section-heading"><div><h2>Новости вашей организации</h2><p>Объявления и ближайшие события</p></div></div><div class="news-grid">${news.slice(0,3).map(newsCard).join('')}</div></section>` : ''}`;
-}
-function profileFields(org = {}) {
-  return `<div class="form-grid"><label class="field full">Название организации<input name="name" required maxlength="100" value="${esc(org.name)}"></label><label class="field">Тип организации<select name="type">${Object.entries(TYPES).map(([type,label]) => `<option value="${type}" ${org.type === type ? 'selected' : ''}>${label}</option>`).join('')}</select></label><label class="field">Район<select name="district">${DISTRICTS.map(d => `<option ${org.district === d ? 'selected' : ''}>${d}</option>`).join('')}</select></label><label class="field full">Адрес<input name="address" required maxlength="140" value="${esc(org.address)}"></label><label class="field">Время работы<input name="hours" required maxlength="80" value="${esc(org.hours || 'Пн–пт · 08:00–18:00')}"></label><label class="field">Возраст или классы<input name="tag" required maxlength="40" value="${esc(org.tag || '1–11 классы')}"></label><label class="field full">Электронная почта<input name="email" type="email" maxlength="120" value="${esc(org.email)}" placeholder="Необязательное поле"></label><label class="field full">Описание<textarea name="description" required maxlength="1200">${esc(org.description)}</textarea></label><label class="field full">Направления и возможности<input name="features" required maxlength="240" value="${esc((org.features || ['Учебные программы']).join(', '))}"><small>Перечислите через запятую.</small></label></div>`;
-}
-function bindProfileForm(org, creating = false) {
-  document.getElementById('profile-form').addEventListener('submit', async event => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const button = form.querySelector('[type=submit]');
-    button.disabled = true;
-    try {
-      const data = Object.fromEntries(new FormData(form));
-      data.features = data.features.split(',').map(s => s.trim()).filter(Boolean);
-      const result = await api(creating ? '/organizations' : '/organizations/' + org.id, {method:creating ? 'POST' : 'PUT',body:data});
-      await loadData();
-      toast(creating ? 'Организация добавлена' : 'Изменения сохранены на сервере');
-      navigate(creating ? '#org/' + result.organization.id : location.hash, creating);
-    } catch (error) { toast(error.message); }
-    finally { button.disabled = false; }
-  });
-}
-function renderNewOrg() {
-  document.title = 'Добавить организацию — Образование рядом';
-  main.innerHTML = `<div class="container page-wrap narrow-page">${breadcrumbs([{label:'Новая организация'}])}<h1 class="page-heading">Добавить организацию</h1><p class="page-lead">Создайте страницу, затем привяжите к ней учеников и учителей в разделе пользователей.</p><section class="content-box"><form id="profile-form">${profileFields()}<div class="form-actions"><button class="button button-primary" type="submit">${icon('plus')}Добавить организацию</button><a class="text-button" href="#catalog">Отмена</a></div></form></section></div>`;
-  bindProfileForm(null, true);
-}
-function renderCabinet(org, tab) {
-  state.cabinetOrg = org.id;
-  if (tab) state.cabinetTab = tab === 'news' ? 'news' : 'profile';
-  document.title = 'Управление страницей — Образование рядом';
-  main.innerHTML = `<div class="container page-wrap">${breadcrumbs([{label:'Управление страницей'}])}<div class="cabinet-heading"><h1 class="page-heading">Управление страницей</h1><span class="role-badge">${icon('user')}${ROLES[state.user.role]}</span></div><p class="page-lead">${isAdmin() ? 'Обновляйте страницы организаций области.' : 'Обновляйте информацию и публикуйте новости своей организации.'}</p><div class="cabinet-layout"><aside class="cabinet-sidebar"><span class="eyebrow">${isAdmin() ? 'ОРГАНИЗАЦИЯ' : 'ВАША ОРГАНИЗАЦИЯ'}</span>${isAdmin() ? `<label for="cabinet-org">Выберите организацию</label><select id="cabinet-org">${state.organizations.map(o => `<option value="${esc(o.id)}" ${o.id === org.id ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}</select>` : `<strong class="own-organization-name">${esc(org.name)}</strong>`}<div class="cabinet-menu"><button data-cabinet-tab="profile" aria-pressed="${state.cabinetTab === 'profile'}">${icon('school')}Моя страница</button><button data-cabinet-tab="news" aria-pressed="${state.cabinetTab === 'news'}">${icon('book')}Новости</button></div><a class="text-button" href="#org/${esc(org.id)}" style="margin-top:18px">Открыть страницу ${icon('arrow')}</a></aside><section class="content-box" id="cabinet-content"></section></div></div>`;
-  if (isAdmin()) document.getElementById('cabinet-org').addEventListener('change', event => navigate('#cabinet/' + event.target.value + '/' + state.cabinetTab));
-  renderCabinetContent(org);
-}
-function renderCabinetContent(org) {
+function renderCabinet(org,tab='profile',editing='') {
+  const tabs = {profile:'Профиль организации',parents:'Информация родителям',program:org.type === 'garden' ? 'Группы и режим дня' : 'Обучение и программы',news:'Новости',documents:'Документы',quality:'Заполненность',history:'История действий'};
+  if (!tabs[tab]) tab = 'profile';
+  main.innerHTML = `<div class="container page-wrap"><div class="breadcrumbs"><a href="${isAdmin() ? '#admin' : '#catalog'}">${isAdmin() ? 'Управление платформой' : 'Публичные сайты'}</a><span>${esc(org.name)}</span></div>${heading(tabs[tab],org.type === 'garden' ? 'Кабинет детского сада. Обновляйте сведения для родителей.' : 'Кабинет организации. Обновляйте сведения для семьи.')}<div class="cabinet-layout"><aside class="cabinet-sidebar"><span class="eyebrow">${org.type === 'garden' ? 'ДЕТСКИЙ САД' : 'ОРГАНИЗАЦИЯ'}</span><strong class="own-organization-name">${esc(org.name)}</strong><nav class="cabinet-menu">${Object.entries(tabs).map(([key,label]) => `<a class="cabinet-tab ${key === tab ? 'active' : ''}" href="#cabinet/${esc(org.id)}/${key}" ${key === tab ? 'aria-current="page"' : ''}>${label}</a>`).join('')}</nav><a class="text-button" href="#preview/${esc(org.id)}">Предпросмотр ${icon('arrow')}</a></aside><section class="content-box" id="cabinet-content"></section></div></div>`;
   const content = document.getElementById('cabinet-content');
-  if (state.cabinetTab === 'profile') {
-    content.innerHTML = `<h2>Информация об организации</h2><form id="profile-form">${profileFields(org)}<div class="form-actions"><button class="button button-primary" type="submit">${icon('check')}Сохранить изменения</button><span class="local-save-note">Изменения будут видны аккаунтам этой организации</span></div></form>`;
-    bindProfileForm(org);
-    return;
+  if (tab === 'profile') {
+    content.innerHTML = `<form id="profile-form">${profileFields(org)}<div class="form-actions"><button class="button button-primary" type="submit">Сохранить профиль</button></div></form>`;
+    bindProfile(org);
+  } else if (tab === 'parents' || tab === 'program') {
+    const garden = org.type === 'garden'; const key = tab === 'parents' ? 'parentInfo' : garden ? 'routine' : 'program';
+    content.innerHTML = `<form id="profile-form"><div class="form-grid">${tab === 'program' && garden ? field('ageGroups','Возрастные группы — через запятую',(org.ageGroups || []).join(', '),{max:480}) + field('ageGroupsKk','Қазақша жас топтары — үтір арқылы',(org.ageGroupsKk || []).join(', '),{max:480}) : ''}${field(key,tab === 'parents' ? 'Информация родителям на русском' : garden ? 'Режим дня на русском' : 'Программы на русском',org[key],{textarea:true})}${field(key+'Kk','Қазақша мәтін',org[key+'Kk'],{textarea:true})}</div><p class="muted-note">Публикуйте только утверждённые сведения для открытого доступа. Информация о конкретных детях в MVP не хранится.</p><button class="button button-primary" type="submit">Сохранить раздел</button></form>`;
+    bindProfile(org);
+  } else if (tab === 'news') renderNewsEditor(org,editing,content);
+  else if (tab === 'documents') renderDocumentsEditor(org,editing,content);
+  else if (tab === 'quality') {
+    const q = state.private.quality.find(item => item.id === org.id);
+    content.innerHTML = `<h2>Заполненность: ${q?.percent || 0}%</h2><p>Показатель наличия материалов, без проверки их достоверности.</p><div class="quality-checks">${Object.entries(q?.checks || {}).map(([key,value]) => `<div><span class="check-state ${value ? 'complete' : ''}">${value ? '✓' : '○'}</span><span>${qualityLabels[key]}</span><a class="text-button" href="#cabinet/${esc(org.id)}/${['news','documents'].includes(key) ? key : key.startsWith('parent') ? 'parents' : ['program','routine','ageGroups'].some(prefix => key.startsWith(prefix)) ? 'program' : 'profile'}">${value ? 'Посмотреть' : 'Заполнить'}</a></div>`).join('')}</div>`;
+  } else {
+    const labels = {organization_created:'Организация создана',organization_updated:'Сведения обновлены',news_draft:'Новость сохранена',news_published:'Новость опубликована',news_archived:'Новость в архиве',document_draft:'Документ сохранён',document_published:'Документ опубликован',document_archived:'Документ в архиве',user_created:'Аккаунт создан',user_assigned:'Привязка изменена'};
+    content.innerHTML = `<h2>Последние действия</h2><p>Последние 100 событий, доступные вашему аккаунту.</p><div class="audit-list">${state.audit.filter(item => item.org_id === org.id).map(item => `<article><strong>${esc(labels[item.event] || item.event)}</strong><p>${esc(item.target)}</p><small>${esc(item.actor)} · ${esc(item.time.replace('T',' '))} UTC</small></article>`).join('') || empty('Действий пока нет.')}</div>`;
   }
-  const news = state.news.filter(n => n.orgId === org.id);
-  content.innerHTML = `<h2>Добавить новость</h2><form id="news-form"><div class="form-grid"><label class="field full">Заголовок<input name="title" required maxlength="120" placeholder="Например, день открытых дверей"></label><label class="field">Категория<select name="category"><option>События</option><option>Кружки</option><option>Родителям</option></select></label><label class="field">Дата публикации<input type="date" name="date" value="2026-10-11" min="2020-01-01" max="2030-12-31" required></label><label class="field full">Короткое описание<input name="summary" maxlength="180" required></label><label class="field full">Текст новости<textarea name="body" maxlength="5000" required></textarea></label></div><div class="form-actions"><button class="button button-primary" type="submit">${icon('plus')}Опубликовать новость</button></div></form><div class="cabinet-news-list"><h2 style="font-size:1.05rem;margin-bottom:0">Публикации организации · ${news.length}</h2>${news.length ? news.map(n => `<div class="cabinet-news-row"><div><a href="#article/${esc(n.id)}"><strong>${esc(n.title)}</strong></a><small>${dateLabel(n.date)}</small></div><button class="icon-button" data-delete-news="${esc(n.id)}" aria-label="Удалить новость: ${esc(n.title)}">${icon('close')}</button></div>`).join('') : '<p>Опубликуйте первую новость вашей организации.</p>'}</div>`;
-  document.getElementById('news-form').addEventListener('submit', async event => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const button = form.querySelector('[type=submit]');
-    button.disabled = true;
-    try {
-      await api('/news', {method:'POST',body:{...Object.fromEntries(new FormData(form)),orgId:org.id}});
-      await loadData();
-      renderCabinetContent(state.organizations.find(o => o.id === org.id));
-      toast('Новость опубликована для вашей организации');
-    } catch (error) { toast(error.message); }
-    finally { button.disabled = false; }
-  });
+  document.title = tabs[tab] + ' — ' + org.name;
 }
-function renderUsers() {
-  document.title = 'Пользователи — Образование рядом';
-  main.innerHTML = `<div class="container page-wrap">${breadcrumbs([{label:'Пользователи'}])}<div class="section-heading"><div><h1 class="page-heading">Пользователи и доступ</h1><p>Каждый ученик и учитель привязан к одной организации.</p></div><a class="button button-primary" href="#new-user">${icon('plus')}Добавить аккаунт</a></div><div class="users-table"><div class="users-table-head"><span>Пользователь</span><span>Роль</span><span>Организация</span><span></span></div>${state.users.map(user => `<div class="user-row"><div><strong>${esc(user.name)}</strong><small>${esc(user.username)}</small></div><span class="role-badge">${ROLES[user.role]}</span><span class="user-org-name">${esc(user.role === 'admin' ? 'Все организации области' : state.organizations.find(o => o.id === user.orgId)?.name || 'Организация не найдена')}</span>${user.role === 'admin' ? '<span class="user-admin-label">Администратор</span>' : `<a class="text-button" href="#user/${esc(user.id)}">Изменить привязку ${icon('arrow')}</a>`}</div>`).join('')}</div></div>`;
+function bindProfile(org) { bindForm('profile-form',async values => { const data = {...org,...values}; for (const key of ['features','featuresKk','ageGroups','ageGroupsKk']) if (typeof data[key] === 'string') data[key] = data[key].split(',').map(value => value.trim()).filter(Boolean); await api('/organizations/'+org.id,{method:'PUT',body:data}); await loadData(); await route(); toast('Изменения сохранены.'); }); }
+function renderNewsEditor(org,id,content) {
+  const news = state.private.news.filter(item => item.orgId === org.id);
+  if (id) {
+    const item = id === 'new' ? {} : news.find(entry => entry.id === id);
+    if (!item) throw new Error('Материал не найден.');
+    content.innerHTML = `<a class="text-button" href="#cabinet/${esc(org.id)}/news">← К списку</a><h2>${item.id ? 'Редактировать новость' : 'Добавить новость'}</h2><form id="news-form"><div class="form-grid">${field('title','Заголовок RU',item.title,{max:120,required:true})}${field('titleKk','Қазақша тақырып',item.titleKk,{max:120})}${field('summary','Короткое описание RU',item.summary,{max:180,required:true})}${field('summaryKk','Қазақша қысқаша сипаттама',item.summaryKk,{max:180})}${field('body','Текст RU',item.body,{max:5000,textarea:true,required:true})}${field('bodyKk','Қазақша мәтін',item.bodyKk,{max:5000,textarea:true})}${selectField('category','Категория',{'События':'События','Кружки':'Кружки','Родителям':'Родителям'},item.category)}${field('date','Дата новости',item.date || today(),{type:'date',max:10,required:true,full:false})}${selectField('status','Статус',STATUS,item.status || (item.id ? 'published' : 'draft'),true)}</div><p class="muted-note">Статус «Опубликовано» сразу открывает материал посетителям. Дата новости не задаёт отложенную публикацию.</p><button class="button button-primary" type="submit">Сохранить новость</button></form>`;
+    bindForm('news-form',async values => { await api(item.id ? '/news/'+item.id : '/news',{method:item.id ? 'PUT' : 'POST',body:{...values,orgId:org.id}}); await loadData(); navigate('#cabinet/'+org.id+'/news'); toast('Новость сохранена.'); });
+  } else content.innerHTML = `<div class="section-heading"><h2>Новости</h2><a class="button button-primary" href="#cabinet/${esc(org.id)}/news/new">Добавить новость ${icon('plus')}</a></div><div class="management-list">${news.map(item => `<article><div><strong>${esc(item.title)}</strong><small>${STATUS[item.status || 'published']} · ${dateLabel(item.date)}</small></div><a class="text-button" href="#cabinet/${esc(org.id)}/news/${esc(item.id)}">Редактировать</a>${item.status !== 'archived' ? `<button class="text-button" data-archive-news="${esc(item.id)}">В архив</button>` : ''}</article>`).join('') || empty('Новостей пока нет.')}</div>`;
 }
-function renderUserForm(user = null) {
-  document.title = (user ? 'Привязка аккаунта' : 'Добавить аккаунт') + ' — Образование рядом';
-  main.innerHTML = `<div class="container page-wrap narrow-page">${breadcrumbs([{label:'Пользователи',href:'#users'},{label:user ? 'Привязка аккаунта' : 'Новый аккаунт'}])}<h1 class="page-heading">${user ? 'Привязка аккаунта' : 'Добавить аккаунт'}</h1><p class="page-lead">${user ? 'При смене организации текущие сеансы пользователя завершатся. После нового входа откроется назначенная организация.' : 'Укажите роль и организацию. После входа пользователь сразу попадёт на её страницу.'}</p><section class="content-box"><form id="user-form"><div class="form-grid"><label class="field full">Отображаемое имя<input name="name" required maxlength="80" value="${esc(user?.name)}"></label><label class="field">Роль пользователя<select name="role"><option value="student" ${user?.role === 'student' ? 'selected' : ''}>Ученик</option><option value="teacher" ${user?.role === 'teacher' ? 'selected' : ''}>Учитель</option></select></label><label class="field">Организация пользователя<select name="orgId" required>${state.organizations.map(o => `<option value="${esc(o.id)}" ${user?.orgId === o.id ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}</select></label>${user ? `<div class="field full">Логин<strong>${esc(user.username)}</strong></div>` : '<label class="field">Логин нового аккаунта<input name="username" required minlength="3" maxlength="40" pattern="[a-zA-Z][a-zA-Z0-9_.-]{2,39}" autocomplete="off"><small>Латинские буквы, цифры, точка, дефис или подчёркивание.</small></label><label class="field">Пароль нового аккаунта<input name="password" type="password" required minlength="8" maxlength="128" autocomplete="new-password"><small>Минимум 8 символов.</small></label>'}</div><div class="form-actions"><button class="button button-primary" type="submit">${icon(user ? 'check' : 'plus')}${user ? 'Сохранить привязку' : 'Создать аккаунт'}</button><a class="text-button" href="#users">Отмена</a></div></form></section></div>`;
-  document.getElementById('user-form').addEventListener('submit', async event => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const button = form.querySelector('[type=submit]');
-    button.disabled = true;
-    try {
-      await api('/users' + (user ? '/' + user.id : ''), {method:user ? 'PUT' : 'POST',body:Object.fromEntries(new FormData(form))});
-      await loadData();
-      toast(user ? 'Привязка аккаунта обновлена' : 'Аккаунт создан');
-      navigate('#users');
-    } catch (error) { toast(error.message); }
-    finally { button.disabled = false; }
-  });
+function renderDocumentsEditor(org,id,content) {
+  const documents = state.private.documents.filter(item => item.orgId === org.id);
+  if (id) {
+    const item = id === 'new' ? {} : documents.find(entry => entry.id === id);
+    if (!item) throw new Error('Документ не найден.');
+    content.innerHTML = `<a class="text-button" href="#cabinet/${esc(org.id)}/documents">← К списку</a><h2>${item.id ? 'Редактировать документ' : 'Загрузить документ'}</h2><form id="document-form"><div class="form-grid">${field('title','Название RU',item.title,{max:120,required:true})}${field('titleKk','Қазақша атауы',item.titleKk,{max:120})}${item.id ? `<p>Файл: ${esc(item.filename)}. Для другой версии загрузите новый документ.</p>` : '<label class="field full">Файл PDF или TXT<input name="file" type="file" accept=".pdf,.txt" required><small>До 8 МБ. TXT — UTF-8. Только документы для открытого доступа.</small></label>'}${selectField('status','Статус',STATUS,item.status || 'draft',true)}</div><p class="muted-note">Черновик доступен только сотрудникам организации. Публикация открывает файл всем посетителям. Архив скрывает его снова.</p><button class="button button-primary" type="submit">Сохранить документ</button></form>`;
+    bindForm('document-form',async (values,form) => { const data = {...values,orgId:org.id}; delete data.file; if (!item.id) { const file = form.elements.file.files[0]; if (!file || file.size > 8*1024*1024) throw new Error('Выберите файл до 8 МБ.'); data.filename = file.name; data.fileBase64 = await new Promise((resolve,reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1]); reader.onerror = () => reject(new Error('Не удалось прочитать файл.')); reader.readAsDataURL(file); }); } await api(item.id ? '/documents/'+item.id : '/documents',{method:item.id ? 'PUT' : 'POST',body:data}); await loadData(); navigate('#cabinet/'+org.id+'/documents'); toast('Документ сохранён.'); });
+  } else content.innerHTML = `<div class="section-heading"><h2>Документы</h2><a class="button button-primary" href="#cabinet/${esc(org.id)}/documents/new">Загрузить документ ${icon('plus')}</a></div><div class="management-list">${documents.map(item => `<article><div><strong>${esc(item.title)}</strong><small>${STATUS[item.status]} · ${esc(item.filename)}</small></div><a class="text-button" href="/api/documents/${esc(item.id)}" download>Скачать</a><a class="text-button" href="#cabinet/${esc(org.id)}/documents/${esc(item.id)}">Изменить</a>${item.status !== 'archived' ? `<button class="text-button" data-archive-document="${esc(item.id)}">В архив</button>` : ''}</article>`).join('')}</div>`;
 }
-function renderAllNews() {
-  document.title = 'Новости — Образование рядом';
-  const news = state.news.filter(n => state.newsCategory === 'all' || n.category === state.newsCategory);
-  main.innerHTML = `<div class="container page-wrap">${breadcrumbs([{label:'Новости'}])}<h1 class="page-heading">Новости организаций</h1><p class="page-lead">События и объявления области.</p><div class="type-filters news-filters">${[['all','Все новости'],['События','События'],['Кружки','Кружки'],['Родителям','Родителям']].map(([category,label]) => `<button class="filter-chip" data-news-category="${category}" aria-pressed="${state.newsCategory === category}">${label}</button>`).join('')}</div><div class="news-grid">${news.length ? news.map(newsCard).join('') : '<div class="empty-state"><h3>В этой категории пока нет новостей</h3></div>'}</div></div>`;
-}
-function renderArticle(news) {
-  const org = state.organizations.find(o => o.id === news.orgId);
-  document.title = news.title + ' — Образование рядом';
-  main.innerHTML = `<div class="container page-wrap">${breadcrumbs([{label:'Новости',href:isAdmin() ? '#all-news' : '#org/' + state.user.orgId + '/news'},{label:news.title}])}<article class="article"><div class="news-meta"><span class="category">${esc(news.category)}</span><time datetime="${esc(news.date)}">${dateLabel(news.date)}</time></div><h1 class="page-heading">${esc(news.title)}</h1><p class="page-lead">${esc(news.summary)}</p>${org ? `<a class="text-button" href="#org/${esc(org.id)}">${esc(org.name)} ${icon('arrow')}</a>` : ''}${newsArt(news)}<div class="article-body">${news.body.split('\n').filter(Boolean).map(p => `<p>${esc(p)}</p>`).join('')}</div></article></div>`;
-}
-function renderDenied(message = 'Этот раздел недоступен вашему аккаунту.') {
-  document.title = 'Доступ ограничен — Образование рядом';
-  main.innerHTML = `<div class="container page-wrap access-denied"><div class="empty-state">${icon('user')}<h1 class="page-heading">У каждого — своё пространство</h1><p>${esc(message)}</p><a class="button button-primary" href="${homeHash()}">${isAdmin() ? 'К организациям' : 'В свою организацию'} ${icon('arrow')}</a></div></div>`;
-}
-function renderError(message) {
-  main.innerHTML = `<div class="container page-wrap access-denied"><div class="empty-state">${icon('info')}<h1 class="page-heading">Не удалось открыть портал</h1><p>${esc(message)}</p><button class="button button-primary" data-retry>Попробовать ещё раз</button></div></div>`;
+function renderNewOrg() { main.innerHTML = `<div class="container page-wrap narrow-page">${heading('Добавить организацию','Новый сайт начинается с черновика. Заполните разделы и назначьте сотрудника.')}<section class="content-box"><form id="profile-form">${profileFields()}<button class="button button-primary" type="submit">Создать организацию</button></form></section></div>`; bindForm('profile-form',async values => { values.features = values.features.split(',').map(v => v.trim()).filter(Boolean); values.featuresKk = values.featuresKk.split(',').map(v => v.trim()).filter(Boolean); const result = await api('/organizations',{method:'POST',body:values}); await loadData(); navigate('#cabinet/'+result.organization.id); toast('Организация создана.'); }); }
+function renderUsers() { main.innerHTML = `<div class="container page-wrap">${heading('Пользователи и доступ')}<a class="button button-primary" href="#new-user">Добавить аккаунт</a><div class="management-list users-management">${state.users.map(user => `<article><div><strong>${esc(user.name)}</strong><small>${esc(user.username)} · ${ROLES[user.role]}</small></div><span>${esc(privateOrg(user.orgId)?.name || 'Все организации')}</span>${user.role === 'admin' ? '' : `<a class="text-button" href="#user/${esc(user.id)}">Изменить привязку</a>`}</article>`).join('')}</div><p class="muted-note">Создание учётных записей детей для публичного чтения не требуется. В демо используются вымышленные аккаунты.</p></div>`; }
+function renderUserForm(user) { main.innerHTML = `<div class="container page-wrap narrow-page">${heading(user ? 'Изменить привязку' : 'Добавить аккаунт','При изменении привязки действующие сеансы пользователя завершаются.')}<section class="content-box"><form id="user-form"><div class="form-grid">${field('name','Отображаемое имя',user?.name,{max:80,required:true})}${selectField('role','Роль',{teacher:'Сотрудник организации',student:'Ученик / родитель'},user?.role || 'teacher')}${selectField('orgId','Организация',Object.fromEntries(state.private.organizations.map(org => [org.id,org.name])),user?.orgId)}${user ? '' : field('username','Логин','',{max:40,required:true}) + field('password','Пароль','',{type:'password',max:128,required:true})}</div><button class="button button-primary" type="submit">Сохранить аккаунт</button></form></section></div>`; bindForm('user-form',async values => { await api(user ? '/users/'+user.id : '/users',{method:user ? 'PUT' : 'POST',body:values}); await loadData(); navigate('#users'); toast('Аккаунт сохранён.'); }); }
+function bindForm(id,callback,login=false) {
+  document.getElementById(id).addEventListener('submit',async event => { event.preventDefault(); const form = event.currentTarget; const button = form.querySelector('[type=submit]'); button.disabled = true; try { await callback(Object.fromEntries(new FormData(form)),form); } catch (error) { if (login && document.getElementById('login-error')) { const box = document.getElementById('login-error'); box.textContent = error.message; box.hidden = false; } else toast(error.message); } finally { button.disabled = false; } });
 }
 async function route() {
-  const ticket = ++state.ticket;
-  document.getElementById('mobile-nav').hidden = true;
-  document.getElementById('mobile-toggle').setAttribute('aria-expanded', 'false');
-  window.scrollTo(0,0);
-  if (!state.user) { renderLogin(); updateShell(); return; }
-  const [page,id,tab] = (location.hash.slice(1) || 'home').split('/');
-  if (['home','login','catalog','news','all-news'].includes(page) && !isAdmin()) {
-    history.replaceState(null, '', homeHash() + (['news','all-news'].includes(page) ? '/news' : ''));
-    return route();
-  }
+  const render = ++state.render;
+  const [page='catalog',id,tab,editing] = location.hash.slice(1).split('/');
+  document.getElementById('mobile-nav').hidden = true; document.getElementById('mobile-toggle').setAttribute('aria-expanded','false');
+  shell(); window.scrollTo(0,0);
   try {
-    if (['home','login','catalog'].includes(page)) renderAdmin();
-    else if (page === 'org') {
-      if (!canRead(id)) { renderDenied('Вы можете открывать только организацию, к которой привязан ваш аккаунт.'); }
-      else {
-        const data = await api('/organizations/' + encodeURIComponent(id));
-        if (ticket !== state.ticket) return;
-        renderOrganization(data.organization, tab);
-      }
-    } else if (page === 'article') {
-      const data = await api('/news/' + encodeURIComponent(id));
-      if (ticket !== state.ticket) return;
-      renderArticle(data.news);
-    } else if (page === 'all-news' || page === 'news') renderAllNews();
-    else if (page === 'cabinet') {
-      const orgId = id || state.user.orgId || state.cabinetOrg || state.organizations[0]?.id;
-      if (!canEdit() || !canRead(orgId)) renderDenied('У вас нет права управлять этой организацией.');
-      else {
-        const data = await api('/organizations/' + encodeURIComponent(orgId));
-        if (ticket !== state.ticket) return;
-        renderCabinet(data.organization, tab);
-      }
-    } else if (!isAdmin()) renderDenied();
+    if (['','home','catalog','organizations-section'].includes(page)) { renderCatalogPage(); if (page === 'organizations-section') document.getElementById('organizations-section').scrollIntoView(); }
+    else if (page === 'org') { const data = await api('/public/organizations/'+encodeURIComponent(id)); if (render !== state.render) return; renderOrganization(data.organization,tab); }
+    else if (page === 'article') { const data = await api('/public/news/'+encodeURIComponent(id)); if (render !== state.render) return; renderArticle(data.news); }
+    else if (page === 'all-news') renderAllNews();
+    else if (page === 'login' || !state.user) renderLogin();
+    else if (page === 'preview-article') { if (!isStaff()) throw new Error('Предпросмотр доступен сотруднику.'); const data = await api('/news/'+encodeURIComponent(id)); if (render !== state.render) return; renderArticle(data.news,true); }
+    else if (page === 'preview') { if (!isStaff() || !privateOrg(id)) throw new Error('Организация недоступна аккаунту.'); const data = await api('/organizations/'+encodeURIComponent(id)); if (render !== state.render) return; renderOrganization(data.organization,tab,true); }
+    else if (page === 'cabinet') { const org = privateOrg(id || state.user.orgId); if (!isStaff() || !org) throw new Error('Кабинет доступен сотруднику своей организации.'); renderCabinet(org,tab,editing); }
+    else if (!isAdmin()) throw new Error('Раздел доступен администратору.');
+    else if (page === 'admin') renderAdmin();
     else if (page === 'new-org') renderNewOrg();
     else if (page === 'users') renderUsers();
     else if (page === 'new-user') renderUserForm();
-    else if (page === 'user') {
-      const user = state.users.find(u => u.id === id && u.role !== 'admin');
-      if (user) renderUserForm(user); else renderDenied('Аккаунт не найден или недоступен для изменения.');
-    } else renderDenied('Такой страницы пока нет.');
-  } catch (error) {
-    if (ticket !== state.ticket) return;
-    if (error.status === 403 || error.status === 404) renderDenied(error.message);
-    else renderError(error.message);
-  }
-  updateShell();
+    else if (page === 'user') { const user = state.users.find(item => item.id === id && item.role !== 'admin'); if (!user) throw new Error('Аккаунт не найден.'); renderUserForm(user); }
+    else throw new Error('Страница не найдена.');
+  } catch (error) { if (render === state.render) main.innerHTML = `<div class="container page-wrap">${heading('Не удалось открыть страницу',error.message)}<a class="button button-primary" href="#catalog">${t('back')}</a></div>`; }
 }
-async function downloadDocument(kind, orgId) {
-  if (!canRead(orgId)) return;
+main.addEventListener('click',async event => {
+  const button = event.target.closest('button'); if (!button) return;
   try {
-    const response = await fetch('/api/organizations/' + encodeURIComponent(orgId) + '/documents/' + kind, {credentials:'same-origin',cache:'no-store'});
-    if (!response.ok) {
-      const result = await response.json();
-      if (response.status === 401) { clearAccount(); navigate('#login', true); }
-      throw new Error(result.error);
-    }
-    const url = URL.createObjectURL(await response.blob());
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = orgId + '-' + kind + '-demo.txt';
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  } catch (error) { toast(error.message); }
-}
-main.addEventListener('click', async event => {
-  const button = event.target.closest('button');
-  if (!button) return;
-  if (button.dataset.loginRole) { state.loginRole = button.dataset.loginRole; renderLogin(); }
-  else if (button.dataset.fillDemo) {
-    const form = document.getElementById('login-form');
-    form.elements.username.value = button.dataset.fillDemo;
-    form.elements.password.value = 'Demo2026!';
-    form.elements.username.focus();
-  } else if (button.dataset.type && isAdmin()) { state.type = button.dataset.type; state.page = 1; renderCatalog(); }
-  else if (button.dataset.view && isAdmin()) { state.view = button.dataset.view; renderCatalog(); }
-  else if (button.dataset.page && isAdmin()) { state.page = Number(button.dataset.page); renderCatalog(); }
-  else if (button.hasAttribute('data-reset-filters') && isAdmin()) { Object.assign(state,{query:'',type:'all',district:'all',page:1}); renderAdmin(); }
-  else if (button.dataset.cabinetTab && canEdit()) { state.cabinetTab = button.dataset.cabinetTab; navigate('#cabinet/' + state.cabinetOrg + '/' + state.cabinetTab); }
-  else if (button.dataset.newsCategory && isAdmin()) { state.newsCategory = button.dataset.newsCategory; renderAllNews(); }
-  else if (button.dataset.deleteNews && canEdit()) {
-    button.disabled = true;
-    try { await api('/news/' + button.dataset.deleteNews,{method:'DELETE',body:{}}); await loadData(); await route(); toast('Новость удалена'); }
-    catch (error) { toast(error.message); }
-    finally { button.disabled = false; }
-  } else if (button.dataset.download) await downloadDocument(button.dataset.download, button.dataset.org);
-  else if (button.hasAttribute('data-retry')) await initialize();
+    if (button.dataset.loginRole) { state.loginRole = button.dataset.loginRole; renderLogin(); }
+    else if (button.dataset.fillDemo) { const form = document.getElementById('login-form'); form.elements.username.value = button.dataset.fillDemo; form.elements.password.value = 'Demo2026!'; form.elements.username.focus(); }
+    else if (button.dataset.type) { state.type = button.dataset.type; state.page = 1; renderCatalogPage(); }
+    else if (button.dataset.page) { state.page = Number(button.dataset.page); catalogResults(); }
+    else if (button.dataset.archiveNews || button.dataset.archiveDocument) { button.disabled = true; const news = Boolean(button.dataset.archiveNews); await api('/'+(news ? 'news/' : 'documents/')+(news ? button.dataset.archiveNews : button.dataset.archiveDocument),{method:'DELETE',body:{}}); await loadData(); await route(); toast('Материал перенесён в архив. Его можно восстановить через редактирование.'); }
+  } catch (error) { toast(error.message); button.disabled = false; }
 });
-document.getElementById('account-actions').addEventListener('click', async event => {
-  const button = event.target.closest('[data-logout]');
-  if (!button) return;
-  button.disabled = true;
-  try { await api('/logout',{method:'POST',body:{}}); clearAccount(); signalAccountChange(); navigate('#login',true); }
-  catch (error) { toast(error.message); button.disabled = false; }
+document.getElementById('account-actions').addEventListener('click',async event => {
+  const language = event.target.closest('[data-language]'); if (language) { state.lang = language.dataset.language; try { localStorage.setItem('edu-language',state.lang); } catch {} const url = new URL(location.href); url.searchParams.set('lang',state.lang); history.replaceState(null,'',url); await route(); return; }
+  const logout = event.target.closest('[data-logout]'); if (logout) { logout.disabled = true; try { await api('/logout',{method:'POST',body:{}}); clearPrivate(); await loadData(); accountChannel?.postMessage('changed'); navigate('#catalog'); } catch (error) { toast(error.message); logout.disabled = false; } }
 });
-document.getElementById('accessibility').addEventListener('click', () => {
-  state.largeText = !state.largeText;
-  try { localStorage.setItem('edu-text-size', state.largeText ? 'large' : 'normal'); } catch {}
-  updateShell();
-});
-document.getElementById('mobile-toggle').addEventListener('click', () => {
-  const menu = document.getElementById('mobile-nav');
-  menu.hidden = !menu.hidden;
-  document.getElementById('mobile-toggle').setAttribute('aria-expanded',String(!menu.hidden));
-});
-document.querySelector('.skip-link').addEventListener('click', event => { event.preventDefault(); main.focus(); main.scrollIntoView({block:'start'}); });
+document.getElementById('accessibility').addEventListener('click',() => { state.largeText = !state.largeText; try { localStorage.setItem('edu-text-size',state.largeText ? 'large' : 'normal'); } catch {} shell(); });
+document.getElementById('mobile-toggle').addEventListener('click',() => { const nav = document.getElementById('mobile-nav'); nav.hidden = !nav.hidden; document.getElementById('mobile-toggle').setAttribute('aria-expanded',String(!nav.hidden)); });
+document.querySelector('.skip-link').addEventListener('click',event => { event.preventDefault(); main.focus(); main.scrollIntoView({block:'start'}); });
 const dialog = document.getElementById('info-dialog');
-document.getElementById('demo-info').addEventListener('click', () => dialog.showModal());
-document.getElementById('close-dialog').addEventListener('click', () => dialog.close());
-document.getElementById('dialog-done').addEventListener('click', () => dialog.close());
-window.addEventListener('hashchange', route);
-async function initialize(goHome = false) {
-  const epoch = state.authEpoch;
-  try {
-    const session = await api('/session');
-    if (epoch !== state.authEpoch) return;
-    Object.assign(state, session);
-    if (state.user) await loadData();
-    if (epoch !== state.authEpoch) return;
-    if (goHome) history.replaceState(null, '', homeHash());
-    await route();
-  } catch (error) {
-    if (epoch !== state.authEpoch) return;
-    clearAccount(); renderError(error.message); updateShell();
-  }
-}
+document.getElementById('demo-info').addEventListener('click',() => dialog.showModal());
+document.getElementById('close-dialog').addEventListener('click',() => dialog.close());
+document.getElementById('dialog-done').addEventListener('click',() => dialog.close());
+window.addEventListener('hashchange',route);
+async function initialize() { try { await loadData(); await route(); } catch { main.innerHTML = `<div class="container page-wrap">${heading('Нет связи с сервером','Запустите сервер проекта и обновите страницу.')}</div>`; } }
 initialize();
