@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#174b40">
+  <meta name="description" content="Образование рядом — единый портал школ и детских садов области. Найдите организацию, новости и полезную информацию для семьи.">
+  <title>Образование рядом — портал школ и детских садов</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./roles.css">
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Перейти к содержимому</a>
+  <svg class="sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M12 6c-3-2-6-2-9-1v14c3-1 6-1 9 1 3-2 6-2 9-1V5c-3-1-6-1-9 1Zm0 0v14"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h16m-6-6 6 6-6 6"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m8 4 8 8-8 8"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M19 10c0 5-7 11-7 11S5 15 5 10a7 7 0 1 1 14 0Z"/><circle cx="12" cy="10" r="2.5"/></symbol>
+    <symbol id="i-school" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7M5 9v12h14V9M9 21v-6h6v6M2 21h20M8 11h.01M16 11h.01"/><circle cx="12" cy="8" r="1"/></symbol>
+    <symbol id="i-flower" viewBox="0 0 24 24"><path d="M12 19v3m0-17c2-5 8-2 5 2 5-1 7 5 2 7 3 4-2 8-5 4-1 5-7 4-7-1-5 2-8-4-3-6-5-3-1-8 3-5-1-5 5-7 5-1Z"/><circle cx="12" cy="11" r="3"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 2 3 7 7 3-7 3-3 7-3-7-7-3 7-3 3-7Z"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6m2 3a5 5 0 0 1 3 5v1"/></symbol>
+    <symbol id="i-heart" viewBox="0 0 24 24"><path d="M20 5a5 5 0 0 0-8 1 5 5 0 0 0-8-1c-4 4 0 9 8 15 8-6 12-11 8-15Z"/></symbol>
+    <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4-6 4V3Z"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 5h13M8 12h13M8 19h13M3 5h.01M3 12h.01M3 19h.01"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H5v18h14V8l-5-5Zm0 0v5h5M8 13h8m-8 4h6"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.01"/></symbol>
+    <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 6 9 7 9-7"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  </svg>
+  <header class="header">
+    <div class="container header-inner">
+      <a class="brand" href="#home" aria-label="Образование рядом — главная"><span class="brand-mark"><svg class="icon"><use href="#i-book"/></svg></span><span><strong>Образование рядом</strong><small>Единый портал области</small></span></a>
+      <nav class="nav" id="main-nav" aria-label="Основное меню"></nav>
+      <div class="header-actions"><button class="accessibility" id="accessibility" type="button" aria-label="Увеличить размер текста" aria-pressed="false">Аа</button><div id="account-actions" class="account-actions"></div><button class="icon-button mobile-toggle" id="mobile-toggle" aria-expanded="false" aria-label="Открыть меню" hidden><svg class="icon"><use href="#i-menu"/></svg></button></div>
+    </div>
+    <nav class="mobile-nav container" id="mobile-nav" aria-label="Мобильное меню" hidden></nav>
+  </header>
+  <main id="main" tabindex="-1"><div class="container loading-state" role="status">Загружаем портал…</div></main>
+  <footer class="footer"><div class="container footer-top"><a class="brand" href="#home"><span class="brand-mark"><svg class="icon"><use href="#i-book"/></svg></span><span><strong>Образование рядом</strong><small>Своя организация. Всё важное рядом.</small></span></a><div class="footer-links" id="footer-links"></div></div><div class="container footer-bottom"><span>© 2026 Образование рядом</span><span><span class="status-dot"></span> MVP · Данные демонстрационные</span><button class="text-button" id="demo-info">О демоверсии</button></div></footer>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <dialog id="info-dialog"><div class="dialog-top"><span class="eyebrow">MVP · ТРИ РОЛИ</span><button class="icon-button" id="close-dialog" aria-label="Закрыть"><svg class="icon"><use href="#i-close"/></svg></button></div><h2>У каждого — своё пространство</h2><p>Ученик и учитель видят организацию, к которой привязан их аккаунт. Администратор управляет общим каталогом и привязками пользователей.</p><p>Данные хранятся на локальном сервере в общей базе. Проверка прав действует на сервере. Организации и тестовые аккаунты созданы для демонстрации; размещение на сервере области пока не выполнено.</p><button class="button button-primary" id="dialog-done">Понятно <svg class="icon"><use href="#i-check"/></svg></button></dialog>
+</body>
+</html>
