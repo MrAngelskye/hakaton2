@@ -5,9 +5,18 @@
   "command": "python -m unittest discover -s edu-portal/tests -v",
   "httpTests": {"total":19,"passed":19,"failed":0},
   "javascriptSyntax": "passed",
+  "githubCi": {
+    "status": "passed",
+    "runId": 38275774962,
+    "url": "https://github.com/MrAngelskye/hakaton2/actions/runs/38275774962",
+    "commit": "865e6d320ebfc7194c0c36a20b2795ebb78d2ef1",
+    "pythonVersions": ["3.10", "3.13"],
+    "platform": "Ubuntu"
+  },
+  "sourceArchive": {"integrity": "passed", "cleanExtractionStartup": "passed", "publicOrganizations": 12, "kindergartens": 4},
   "browserChecks": ["public catalog", "kindergarten filter", "RU/KK", "garden groups and routine", "parent information", "staff login", "save garden section", "bilingual draft news", "edit and publish news", "public article", "TXT upload", "document publication", "public download matches upload", "mobile garden page", "admin dashboard", "create fictional draft garden", "user list and form", "school programs RU/KK"],
   "downloadSha256": "dd4ab96ed96aa4ec3d8f5ece35b6d869ee9e5e7c5e3155ae37e6ea0d1b811e42",
   "realOrganizationsContacted": false,
   "realIntegrations": false,
-  "limits": ["Local mock/demo only", "No production deployment", "No 600-organization load test", "No full security or accessibility audit", "GitHub CI not yet run"]
+  "limits": ["Local mock/demo only", "No production deployment", "No 600-organization load test", "No full security or accessibility audit"]
 }
